@@ -1,3 +1,4 @@
+import time
 from typing import Callable, Optional
 
 import torch
@@ -235,6 +236,7 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
         self.rotary_emb = Qwen3RotaryEmbedding(config)
         self.block_size = config.block_size
         self.mask_token_id = flashmtp_config.get("mask_token_id", None)
+        self._last_decode_stats = {}
 
         # For seq concat mode: use Identity (no computation, no parameters)
         # For feature mode: use Linear projection and RMSNorm
@@ -253,6 +255,9 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
         print_on_rank0(f"self.chs_concat_mode: {self.chs_concat_mode}")
 
         self.post_init()
+
+    def get_last_decode_stats(self) -> dict:
+        return dict(self._last_decode_stats)
 
     def forward(
         self,
@@ -292,6 +297,12 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
         temperature: float,
     ):
         self.eval()
+        self._last_decode_stats = {
+            "accept_lengths": [],
+            "target_total_time": 0.0,
+            "draft_total_time": 0.0,
+            "steps": 0,
+        }
         num_input_tokens = input_ids.shape[1]
         max_length = num_input_tokens + max_new_tokens
 
@@ -310,6 +321,9 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
         past_key_values_draft = DynamicCache()
 
         # Prefill stage
+        if target.device.type == "cuda":
+            torch.cuda.synchronize(target.device)
+        target_start = time.perf_counter()
         output = target(
             input_ids,
             position_ids=position_ids[:, :num_input_tokens],
@@ -318,6 +332,9 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
             logits_to_keep=1,
             output_hidden_states=True,
         )
+        if target.device.type == "cuda":
+            torch.cuda.synchronize(target.device)
+        self._last_decode_stats["target_total_time"] += time.perf_counter() - target_start
 
         output_ids[:, :num_input_tokens] = input_ids
         output_ids[:, num_input_tokens : num_input_tokens + 1] = sample(
@@ -334,6 +351,9 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
             block_output_ids = output_ids[:, start : start + block_size].clone()
             block_position_ids = position_ids[:, start : start + block_size]
             noise_embedding = target.model.embed_tokens(block_output_ids)
+            if target.device.type == "cuda":
+                torch.cuda.synchronize(target.device)
+            draft_start = time.perf_counter()
             draft_logits = target.lm_head(
                 self(
                     target_hidden=target_hidden,
@@ -346,9 +366,15 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
                     is_causal=False,
                 )[:, -block_size + 1 :, :]
             )
+            if target.device.type == "cuda":
+                torch.cuda.synchronize(target.device)
+            self._last_decode_stats["draft_total_time"] += time.perf_counter() - draft_start
             past_key_values_draft.crop(start)
             block_output_ids[:, 1:] = sample(draft_logits)
 
+            if target.device.type == "cuda":
+                torch.cuda.synchronize(target.device)
+            target_start = time.perf_counter()
             output = target(
                 block_output_ids,
                 position_ids=block_position_ids,
@@ -356,6 +382,9 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
                 use_cache=True,
                 output_hidden_states=True,
             )
+            if target.device.type == "cuda":
+                torch.cuda.synchronize(target.device)
+            self._last_decode_stats["target_total_time"] += time.perf_counter() - target_start
 
             posterior = sample(output.logits, temperature)
             acceptance_length = (
@@ -376,6 +405,8 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
                 output.hidden_states, self.target_layer_ids
             )[:, : acceptance_length + 1, :]
             acceptance_lengths.append(acceptance_length + 1)
+            self._last_decode_stats["accept_lengths"].append(acceptance_length + 1)
+            self._last_decode_stats["steps"] += 1
             if stop_token_ids is not None and any(
                 stop_token_id in output_ids[:, num_input_tokens:]
                 for stop_token_id in stop_token_ids
