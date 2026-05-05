@@ -172,7 +172,7 @@ def build_models(args) -> Tuple[FlashMTPTargetModel, FlashMTPDraftModel]:
     if not hasattr(draft_config, "flashmtp_config") or draft_config.flashmtp_config is None:
         draft_config.flashmtp_config = {}
         
-    draft_config.flashmtp_config["chs_concat_mode"] = args.chs_concat_mode
+    draft_config.flashmtp_config["chs_concat_mode"] = "feature"
 
     draft_config._attn_implementation = args.attention_backend
     print_on_rank0(f"Using attention backend: {args.attention_backend}")
@@ -398,7 +398,7 @@ def main():
 
     draft_model.mask_token_id = mask_token_id
     
-    draft_model.config.flashmtp_config["chs_concat_mode"] = args.chs_concat_mode
+    draft_model.config.flashmtp_config["chs_concat_mode"] = "feature"
     draft_model.config.flashmtp_config["mask_token_id"] = mask_token_id
     draft_model.config.flashmtp_config["target_layer_ids"] = draft_model.target_layer_ids
     print_on_rank0(f"flashmtp_config: {draft_model.config.flashmtp_config}")
@@ -427,7 +427,7 @@ def main():
         attention_backend=args.attention_backend,
         num_anchors=args.num_anchors,
         loss_decay_gamma=args.loss_decay_gamma,
-        chs_concat_mode=args.chs_concat_mode,
+        chs_concat_mode="feature",
     )
 
     flashmtp_model = FSDP(

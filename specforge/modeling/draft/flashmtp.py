@@ -36,8 +36,13 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
     q_len = q.size(-2)
-    q_embed = (q * cos[..., -q_len:, :]) + (rotate_half(q) * sin[..., -q_len:, :])
-    k_embed = (k * cos) + (rotate_half(k) * sin)
+    k_len = k.size(-2)
+    q_cos = cos[..., -q_len:, :]
+    q_sin = sin[..., -q_len:, :]
+    k_cos = cos[..., -k_len:, :]
+    k_sin = sin[..., -k_len:, :]
+    q_embed = (q * q_cos) + (rotate_half(q) * q_sin)
+    k_embed = (k * k_cos) + (rotate_half(k) * k_sin)
     return q_embed, k_embed
 
 
@@ -129,14 +134,8 @@ class Qwen3FlashMTPAttention(nn.Module):
 
         cos, sin = position_embeddings
         
-        # Only apply RoPE to draft tokens; CHS slots stay un-rotated.
-        if self.chs_concat_mode in ("seq", "feature"):
-            k_ctx_part = k[:, :, :ctx_len, :]  
-            k_noise_part = k[:, :, ctx_len:, :]   
-            q, k_noise_part = apply_rotary_pos_emb(q, k_noise_part, cos, sin)
-            k = torch.cat([k_ctx_part, k_noise_part], dim=2)
-        else:
-            q, k = apply_rotary_pos_emb(q, k, cos, sin)
+        # CHS is positioned at anchor-1 and draft tokens at anchor+k.
+        q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
         if past_key_values is not None:
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
@@ -211,39 +210,17 @@ class Qwen3FlashMTPDecoderLayer(GradientCheckpointingLayer):
         return hidden_states
 
 
-def extract_context_feature(
-    hidden_states: list[torch.Tensor],
-    layer_ids: Optional[list[int]],
-) -> torch.Tensor:
-    """Extract hidden states from specified layer IDs."""
-    offset = 1
-    selected_states = []
-    for layer_id in layer_ids:
-        selected_states.append(hidden_states[layer_id + offset])
-    target_hidden = torch.cat(selected_states, dim=-1)
-    return target_hidden
-
-
 def extract_latest_context_feature(
     hidden_states: list[torch.Tensor],
     layer_ids: Optional[list[int]],
     token_index: int = -1,
-    chs_concat_mode: str = "feature",
 ) -> torch.Tensor:
-    """Extract latest token hidden states from specified layers.
-
-    Returns:
-        - seq mode: (B, L, H)
-        - feature mode: (B, 1, H*L)
-    """
+    """Extract feature-concat hidden states from specified layers."""
     offset = 1
     selected_states = []
     for layer_id in layer_ids:
         layer_hidden = hidden_states[layer_id + offset]
         selected_states.append(layer_hidden[:, token_index, :].unsqueeze(1))
-
-    if chs_concat_mode == "seq":
-        return torch.cat(selected_states, dim=1)
     return torch.cat(selected_states, dim=-1)
 
 
@@ -255,7 +232,9 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
         super().__init__(config)
         self.config = config
         flashmtp_config = getattr(config, "flashmtp_config", {}) or {}
-        self.chs_concat_mode = flashmtp_config.get("chs_concat_mode", "seq")
+        self.chs_concat_mode = "feature"
+        flashmtp_config["chs_concat_mode"] = "feature"
+        config.flashmtp_config = flashmtp_config
         self.layers = nn.ModuleList(
             [
                 Qwen3FlashMTPDecoderLayer(config, layer_idx, self.chs_concat_mode)
@@ -273,20 +252,12 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
         self.mask_token_id = flashmtp_config.get("mask_token_id", None)
         self._last_decode_stats = {}
 
-        # For seq concat mode: use Identity (no computation, no parameters)
-        # For feature mode: use Linear projection and RMSNorm
-        if self.chs_concat_mode == "feature":
-            self.fc = nn.Linear(
-                len(self.target_layer_ids) * config.hidden_size,
-                config.hidden_size,
-                bias=False,
-            )
-            self.hidden_norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        else:
-            self.fc = nn.Identity()
-            # self.hidden_norm = nn.Identity()
-            # maybe need norm
-            self.hidden_norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.fc = nn.Linear(
+            len(self.target_layer_ids) * config.hidden_size,
+            config.hidden_size,
+            bias=False,
+        )
+        self.hidden_norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         print_on_rank0(f"self.chs_concat_mode: {self.chs_concat_mode}")
 
         self.post_init()
@@ -378,7 +349,6 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
             output.hidden_states,
             self.target_layer_ids,
             token_index=-1,
-            chs_concat_mode=self.chs_concat_mode,
         )
 
         # Decode stage
@@ -395,7 +365,7 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
                 self(
                     target_hidden=target_hidden,
                     noise_embedding=noise_embedding,
-                    position_ids=position_ids[:, start : start + block_size],
+                    position_ids=position_ids[:, start - 1 : start + block_size],
                     past_key_values=None,
                     use_cache=False,
                     is_causal=False,
@@ -442,7 +412,6 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
                 output.hidden_states,
                 self.target_layer_ids,
                 token_index=pivot_index,
-                chs_concat_mode=self.chs_concat_mode,
             )
             acceptance_lengths.append(acceptance_length + 1)
             self._last_decode_stats["accept_lengths"].append(acceptance_length + 1)

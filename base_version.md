@@ -17,6 +17,6 @@ DFlash也利用了大模型的hs，但是他保留了kvcache。它间隔的选�
 训练时也是一次前向计算loss，越靠前的位置loss权重越大。
 
 ## Base Version
-Base是基础结构，和DFlash类似，只不过我只用了Contextual Pivot hs（只有最新的一个位置）。并且，我认为需要充分利用大模型，提取所有层hs可以包含信息流动的pattern，因此我的hs选取了大模型所有层。
+Base是基础结构，和DFlash类似，只不过我只用了Contextual Pivot hs（只有最新的一个位置）。
 
 效果和dflash相差一个接收长度。
