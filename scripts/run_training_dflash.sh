@@ -33,8 +33,8 @@ WARMUP_RATIO="${WARMUP_RATIO:-0.04}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.0}"
 
 # 数据特征参数（用于自动构建数据路径）
-DATA_NUM_SAMPLES="${DATA_NUM_SAMPLES:-400000}"
-ENABLE_THINKING="${ENABLE_THINKING:-on}"
+DATA_NUM_SAMPLES="${DATA_NUM_SAMPLES:-40000}"
+ENABLE_THINKING="${ENABLE_THINKING:-off}"
 
 # 构建数据子目录名: n{N|all}_think_{on|off}
 DATASET_BASE_DIR="${DATASET_BASE_DIR:-./cache/dataset}"
@@ -49,7 +49,7 @@ DATA_SUBDIR="n${DATA_NUM_SAMPLES}_think_${THINK_STR}"
 TRAIN_DATA_PATH="/data/wanghanzhen/Projects/MTP/NIPS26/training_data/regen_data/nemotron_${DATA_NUM_SAMPLES}/nemotron_think_${ENABLE_THINKING}_samples_${DATA_NUM_SAMPLES}_qwen3_8b_regen.jsonl"
 EVAL_DATA_PATH="${EVAL_DATA_PATH:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-./cache/models/dflash_sample_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}_qwen3_8b_maxlen${MAX_LENGTH}}"
-CACHE_DIR="./cache/data/regen_data/nemotron_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}"
+CACHE_DIR="./cache/data/regen_data/nemotron_${DATA_NUM_SAMPLES}"
 
 # 模型参数
 NUM_DRAFT_LAYERS="${NUM_DRAFT_LAYERS:-5}"
@@ -65,7 +65,7 @@ EVAL_INTERVAL="${EVAL_INTERVAL:-10000}"
 
 # Tracker 参数
 REPORT_TO="${REPORT_TO:-wandb}"  # none, wandb, tensorboard
-WANDB_PROJECT="${WANDB_PROJECT:-dflash-training}"
+WANDB_PROJECT="${WANDB_PROJECT:-flashmtp-training-exp}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-}"
 WANDB_DIR="${WANDB_DIR:-./wandb}"  # 离线日志保存目录
 WANDB_RUN_ID="${WANDB_RUN_ID:-dflash_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}}"   # 离线子目录名称 (如: my_run_001，生成 offline-run-my_run_001)

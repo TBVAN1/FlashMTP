@@ -41,6 +41,18 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     return q_embed, k_embed
 
 
+def build_target_layer_ids(num_target_layers: int, num_draft_layers: int) -> list[int]:
+    if num_draft_layers == 1:
+        return [num_target_layers // 2]
+    start = 1
+    end = num_target_layers - 3
+    span = end - start
+    return [
+        int(round(start + (i * span) / (num_draft_layers - 1)))
+        for i in range(num_draft_layers)
+    ]
+
+
 class Qwen3FlashMTPAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -117,8 +129,8 @@ class Qwen3FlashMTPAttention(nn.Module):
 
         cos, sin = position_embeddings
         
-        # if seq, only pose position_embed on k_noise
-        if self.chs_concat_mode == "seq":
+        # Only apply RoPE to draft tokens; CHS slots stay un-rotated.
+        if self.chs_concat_mode in ("seq", "feature"):
             k_ctx_part = k[:, :, :ctx_len, :]  
             k_noise_part = k[:, :, ctx_len:, :]   
             q, k_noise_part = apply_rotary_pos_emb(q, k_noise_part, cos, sin)
@@ -203,13 +215,36 @@ def extract_context_feature(
     hidden_states: list[torch.Tensor],
     layer_ids: Optional[list[int]],
 ) -> torch.Tensor:
-    """Extract hidden states from specified layer IDs. """
+    """Extract hidden states from specified layer IDs."""
     offset = 1
     selected_states = []
     for layer_id in layer_ids:
         selected_states.append(hidden_states[layer_id + offset])
     target_hidden = torch.cat(selected_states, dim=-1)
     return target_hidden
+
+
+def extract_latest_context_feature(
+    hidden_states: list[torch.Tensor],
+    layer_ids: Optional[list[int]],
+    token_index: int = -1,
+    chs_concat_mode: str = "feature",
+) -> torch.Tensor:
+    """Extract latest token hidden states from specified layers.
+
+    Returns:
+        - seq mode: (B, L, H)
+        - feature mode: (B, 1, H*L)
+    """
+    offset = 1
+    selected_states = []
+    for layer_id in layer_ids:
+        layer_hidden = hidden_states[layer_id + offset]
+        selected_states.append(layer_hidden[:, token_index, :].unsqueeze(1))
+
+    if chs_concat_mode == "seq":
+        return torch.cat(selected_states, dim=1)
+    return torch.cat(selected_states, dim=-1)
 
 
 class FlashMTPDraftModel(Qwen3PreTrainedModel):
@@ -230,7 +265,7 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
         # target_layer_ids: list of layer indices to extract from target model
         self.target_layer_ids = flashmtp_config.get(
             "target_layer_ids",
-            list(range(config.num_target_layers)),
+            build_target_layer_ids(config.num_target_layers, config.num_hidden_layers),
         )
         self.norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen3RotaryEmbedding(config)
@@ -318,7 +353,6 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
         ).unsqueeze(0)
 
         past_key_values_target = DynamicCache()
-        past_key_values_draft = DynamicCache()
 
         # Prefill stage
         if target.device.type == "cuda":
@@ -340,8 +374,11 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
         output_ids[:, num_input_tokens : num_input_tokens + 1] = sample(
             output.logits, temperature
         )
-        target_hidden = extract_context_feature(
-            output.hidden_states, self.target_layer_ids
+        target_hidden = extract_latest_context_feature(
+            output.hidden_states,
+            self.target_layer_ids,
+            token_index=-1,
+            chs_concat_mode=self.chs_concat_mode,
         )
 
         # Decode stage
@@ -358,18 +395,15 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
                 self(
                     target_hidden=target_hidden,
                     noise_embedding=noise_embedding,
-                    position_ids=position_ids[
-                        :, past_key_values_draft.get_seq_length() : start + block_size
-                    ],
-                    past_key_values=past_key_values_draft,
-                    use_cache=True,
+                    position_ids=position_ids[:, start : start + block_size],
+                    past_key_values=None,
+                    use_cache=False,
                     is_causal=False,
                 )[:, -block_size + 1 :, :]
             )
             if target.device.type == "cuda":
                 torch.cuda.synchronize(target.device)
             self._last_decode_stats["draft_total_time"] += time.perf_counter() - draft_start
-            past_key_values_draft.crop(start)
             block_output_ids[:, 1:] = sample(draft_logits)
 
             if target.device.type == "cuda":
@@ -401,9 +435,15 @@ class FlashMTPDraftModel(Qwen3PreTrainedModel):
             ]
             start += acceptance_length + 1
             past_key_values_target.crop(start)
-            target_hidden = extract_context_feature(
-                output.hidden_states, self.target_layer_ids
-            )[:, : acceptance_length + 1, :]
+            pivot_index = min(
+                acceptance_length, output.hidden_states[0].shape[1] - 1
+            )
+            target_hidden = extract_latest_context_feature(
+                output.hidden_states,
+                self.target_layer_ids,
+                token_index=pivot_index,
+                chs_concat_mode=self.chs_concat_mode,
+            )
             acceptance_lengths.append(acceptance_length + 1)
             self._last_decode_stats["accept_lengths"].append(acceptance_length + 1)
             self._last_decode_stats["steps"] += 1

@@ -17,7 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from specforge.modeling.draft.flashmtp import FlashMTPDraftModel
-from specforge.modeling.draft.flashmtp import extract_context_feature, sample
+from specforge.modeling.draft.flashmtp import extract_latest_context_feature, sample
 
 from evaluation import distributed as dist
 from evaluation.utils import load_and_process_dataset
@@ -48,7 +48,6 @@ def flashmtp_generate(
     )
     position_ids = torch.arange(output_ids.shape[1], device=model.device).unsqueeze(0)
     past_key_values_target = DynamicCache()
-    past_key_values_draft = DynamicCache()
 
     # Prefill stage
     prefill_start = cuda_time()
@@ -64,7 +63,12 @@ def flashmtp_generate(
     output_ids[:, :num_input_tokens] = input_ids
     output_ids[:, num_input_tokens:num_input_tokens+1] = sample(output.logits, temperature)
     if block_size > 1:
-        target_hidden = extract_context_feature(output.hidden_states, model.target_layer_ids)
+        target_hidden = extract_latest_context_feature(
+            output.hidden_states,
+            model.target_layer_ids,
+            token_index=-1,
+            chs_concat_mode=model.chs_concat_mode,
+        )
 
     time_to_first_token = cuda_time() - prefill_start
 
@@ -82,12 +86,11 @@ def flashmtp_generate(
             draft_logits = target.lm_head(model(
                 target_hidden=target_hidden,
                 noise_embedding=noise_embedding,
-                position_ids=position_ids[:, past_key_values_draft.get_seq_length(): start + block_size],
-                past_key_values=past_key_values_draft,
-                use_cache=True,
+                position_ids=position_ids[:, start : start + block_size],
+                past_key_values=None,
+                use_cache=False,
                 is_causal=False,
             )[:, -block_size+1:, :])
-            past_key_values_draft.crop(start)
             block_output_ids[:, 1:] = sample(draft_logits)
             if draft_prefill:
                 draft_prefill = False
@@ -110,7 +113,13 @@ def flashmtp_generate(
         start += acceptance_length + 1
         past_key_values_target.crop(start)
         if block_size > 1:
-            target_hidden = extract_context_feature(output.hidden_states, model.target_layer_ids)[:, :acceptance_length + 1, :]
+            pivot_index = min(acceptance_length, output.hidden_states[0].shape[1] - 1)
+            target_hidden = extract_latest_context_feature(
+                output.hidden_states,
+                model.target_layer_ids,
+                token_index=pivot_index,
+                chs_concat_mode=model.chs_concat_mode,
+            )
         
         if stop_token_ids is not None and any(
             stop_token_id in output_ids[:, num_input_tokens:] for stop_token_id in stop_token_ids
@@ -141,12 +150,12 @@ def flashmtp_generate(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-name-or-path", type=str, required=True)
-    parser.add_argument("--draft-name-or-path", type=str, required=True)
+    parser.add_argument("--model-name-or-path", type=str, default='/data/wanghanzhen/models/Qwen/Qwen3-8B')
+    parser.add_argument("--draft-name-or-path", type=str, default='/data/wanghanzhen/Projects/MTP/NIPS26/FlashMTP/cache/models/flashmtp_feature_sample_400000_think_on_qwen3_8b_maxlen4096')
     parser.add_argument("--block-size", type=int, default=None)
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--max-samples", type=int, default=None)
-    parser.add_argument("--max-new-tokens", type=int, default=16384)
+    parser.add_argument("--max-new-tokens", type=int, default=4096)
     parser.add_argument("--temperature", type=float, default=0.0)
     args = parser.parse_args()
 
@@ -199,7 +208,7 @@ def main() -> None:
         messages = []
         for turn_index, user_content in enumerate(instance["turns"]):
             messages.append({"role": "user", "content": user_content})
-            input_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+            input_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=True)
             input_ids = tokenizer.encode(input_text, return_tensors="pt").to(target.device)
 
             response = {}

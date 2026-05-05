@@ -6,7 +6,9 @@ from .dflash import (
     sample,
 )
 from .flashmtp import (
-    FlashMTPDraftModel
+    FlashMTPDraftModel,
+    build_target_layer_ids as build_flashmtp_target_layer_ids,
+    extract_latest_context_feature,
 )
 from .llama3_eagle import LlamaForCausalLMEagle3
 
@@ -16,6 +18,8 @@ __all__ = [
     "FlashMTPDraftModel",
     "LlamaForCausalLMEagle3",
     "build_target_layer_ids",
+    "build_flashmtp_target_layer_ids",
     "extract_context_feature",
+    "extract_latest_context_feature",
     "sample",
 ]
