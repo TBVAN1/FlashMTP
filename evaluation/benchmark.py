@@ -159,15 +159,17 @@ def flashmtp_generate(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-name-or-path", type=str, default='/data/wanghanzhen/models/Qwen/Qwen3-8B')
-    parser.add_argument("--draft-name-or-path", type=str, default='/data/wanghanzhen/Projects/MTP/NIPS26/FlashMTP/cache/models/flashmtp_feature_sample_400000_think_on_qwen3_8b_maxlen4096')
+    parser.add_argument("--model-name-or-path", type=str, default='/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/models/Qwen/Qwen3-8B')
+    parser.add_argument("--draft-name-or-path", type=str, default='/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP/cache/models/flashmtp_qz_feature_sample_40000_think_off_nlayers5_block__maxlen4096_epochs6/epoch_6_step_29880')
     parser.add_argument("--block-size", type=int, default=None)
     parser.add_argument("--dataset", type=str, required=True)
-    parser.add_argument("--max-samples", type=int, default=100)
+    parser.add_argument("--max-samples", type=int, default=10)
     parser.add_argument("--max-new-tokens", type=int, default=4096)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--think", action="store_true")
     args = parser.parse_args()
+
+    dataset = load_and_process_dataset(args.dataset)
 
     random.seed(0)
     np.random.seed(0)
@@ -207,8 +209,6 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
     mask_token_id = resolve_mask_token_id(draft_model, tokenizer)
     stop_token_ids = [token_id for token_id in [tokenizer.eos_token_id] if token_id is not None]
-    dataset = load_and_process_dataset(args.dataset)
-
     if args.max_samples is not None and len(dataset) > args.max_samples:
         dataset = dataset.shuffle(seed=0).select(range(args.max_samples))
 
