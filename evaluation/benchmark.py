@@ -165,7 +165,7 @@ def main() -> None:
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--max-samples", type=int, default=100)
     parser.add_argument("--max-new-tokens", type=int, default=4096)
-    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--think", action="store_true")
     args = parser.parse_args()
 
@@ -260,8 +260,13 @@ def main() -> None:
             return
         responses = list(chain(*responses))
 
-    t1 = np.mean([r[1].time_per_output_token for r in responses])
-    tb = np.mean([r[block_size].time_per_output_token for r in responses])
+    t1 = sum(
+        r[1].time_per_output_token * r[1].num_output_tokens for r in responses
+    ) / sum(r[1].num_output_tokens for r in responses)
+    tb = sum(
+        r[block_size].time_per_output_token * r[block_size].num_output_tokens
+        for r in responses
+    ) / sum(r[block_size].num_output_tokens for r in responses)
     print(f"Decoding speedup: {t1 / tb:.2f}")
 
     tau = np.mean([np.mean(r[block_size].acceptance_lengths) for r in responses])
