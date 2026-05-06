@@ -49,6 +49,15 @@ def parse_args():
         help="Backend for target model: 'sglang' (service) or 'hf' (local)",
     )
     model_group.add_argument("--draft-config-path", type=str, default=None)
+    model_group.add_argument(
+        "--pretrained-draft-model-path",
+        type=str,
+        default=None,
+        help=(
+            "Optional pretrained DFlash draft model path. When set, the draft "
+            "model is initialized from these weights for continued training."
+        ),
+    )
     model_group.add_argument("--block-size", type=int, default=16)
     model_group.add_argument("--num-draft-layers", type=int, default=1)
     model_group.add_argument(
@@ -158,8 +167,17 @@ def build_models(args) -> Tuple[DFlashTargetModel, DFlashDraftModel]:
     )
 
     if args.draft_config_path:
-        draft_config = AutoConfig.from_pretrained(args.draft_config_path)
+        draft_config = AutoConfig.from_pretrained(
+            args.draft_config_path, trust_remote_code=args.trust_remote_code
+        )
         print_on_rank0(f"Loaded draft config from {args.draft_config_path}")
+    elif args.pretrained_draft_model_path:
+        draft_config = AutoConfig.from_pretrained(
+            args.pretrained_draft_model_path, trust_remote_code=args.trust_remote_code
+        )
+        print_on_rank0(
+            f"Loaded draft config from pretrained draft model: {args.pretrained_draft_model_path}"
+        )
     else:
         target_config = AutoConfig.from_pretrained(args.target_model_path)
         draft_config = AutoConfig.from_pretrained(args.target_model_path)
@@ -174,7 +192,17 @@ def build_models(args) -> Tuple[DFlashTargetModel, DFlashDraftModel]:
     draft_config._attn_implementation = args.attention_backend
     print_on_rank0(f"Using attention backend: {args.attention_backend}")
 
-    draft_model = DFlashDraftModel(draft_config).cuda().to(torch.bfloat16)
+    if args.pretrained_draft_model_path:
+        draft_model = DFlashDraftModel.from_pretrained(
+            args.pretrained_draft_model_path,
+            config=draft_config,
+            torch_dtype=torch.bfloat16,
+        ).cuda().to(torch.bfloat16)
+        print_on_rank0(
+            f"Loaded pretrained draft model weights from {args.pretrained_draft_model_path}"
+        )
+    else:
+        draft_model = DFlashDraftModel(draft_config).cuda().to(torch.bfloat16)
 
     target_model.set_capture_layers(draft_model.target_layer_ids)
 

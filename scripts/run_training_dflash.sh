@@ -22,12 +22,13 @@ MASTER_PORT="${MASTER_PORT:-29501}"
 # 目标模型路径
 TARGET_MODEL="${TARGET_MODEL:-$WHZ_DIR/models/Qwen/Qwen3-8B}"
 TARGET_MODEL_BACKEND="${TARGET_MODEL_BACKEND:-hf}"  # hf 或 sglang
+PRETRAINED_DRAFT_MODEL_PATH="${PRETRAINED_DRAFT_MODEL_PATH:-}"
 
 # 训练参数
 NUM_EPOCHS="${NUM_EPOCHS:-6}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 ACCUMULATION_STEPS="${ACCUMULATION_STEPS:-1}"
-LEARNING_RATE="${LEARNING_RATE:-6e-4}"
+LEARNING_RATE="${LEARNING_RATE:-4e-4}"
 MAX_LENGTH="${MAX_LENGTH:-4096}"
 WARMUP_RATIO="${WARMUP_RATIO:-0.04}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.0}"
@@ -94,6 +95,7 @@ echo "  数据子目录: ${DATA_SUBDIR}"
 echo "------------------------------------------"
 echo "目标模型: ${TARGET_MODEL}"
 echo "目标模型后端: ${TARGET_MODEL_BACKEND}"
+echo "预训练草稿模型: ${PRETRAINED_DRAFT_MODEL_PATH:-无}"
 echo "训练数据: ${TRAIN_DATA_PATH}"
 echo "评估数据: ${EVAL_DATA_PATH:-无}"
 echo "输出目录: ${OUTPUT_DIR}"
@@ -172,6 +174,10 @@ fi
 
 if [ -n "${CKPT_DIR}" ]; then
     OPTIONAL_ARGS="${OPTIONAL_ARGS} --ckpt-dir ${CKPT_DIR}"
+fi
+
+if [ -n "${PRETRAINED_DRAFT_MODEL_PATH}" ]; then
+    OPTIONAL_ARGS="${OPTIONAL_ARGS} --pretrained-draft-model-path ${PRETRAINED_DRAFT_MODEL_PATH}"
 fi
 
 if [ "${REPORT_TO}" != "none" ]; then
