@@ -26,6 +26,17 @@ def cuda_time() -> float:
     torch.cuda.synchronize()
     return time.perf_counter()
 
+def resolve_mask_token_id(draft_model: FlashMTPDraftModel, tokenizer: AutoTokenizer) -> int:
+    mask_token_id = draft_model.mask_token_id
+    if mask_token_id is None:
+        mask_token_id = tokenizer.mask_token_id
+    if mask_token_id is None:
+        raise ValueError(
+            "mask_token_id is None. Please use a draft checkpoint whose config contains "
+            "flashmtp_config['mask_token_id'], or pass/load a tokenizer with mask_token_id."
+        )
+    return int(mask_token_id)
+
 @torch.inference_mode()
 def flashmtp_generate(
     model: FlashMTPDraftModel,
@@ -67,7 +78,6 @@ def flashmtp_generate(
             output.hidden_states,
             model.target_layer_ids,
             token_index=-1,
-            chs_concat_mode=model.chs_concat_mode,
         )
 
     time_to_first_token = cuda_time() - prefill_start
@@ -86,7 +96,7 @@ def flashmtp_generate(
             draft_logits = target.lm_head(model(
                 target_hidden=target_hidden,
                 noise_embedding=noise_embedding,
-                position_ids=position_ids[:, start : start + block_size],
+                position_ids=position_ids[:, start - 1 : start + block_size],
                 past_key_values=None,
                 use_cache=False,
                 is_causal=False,
@@ -118,7 +128,6 @@ def flashmtp_generate(
                 output.hidden_states,
                 model.target_layer_ids,
                 token_index=pivot_index,
-                chs_concat_mode=model.chs_concat_mode,
             )
         
         if stop_token_ids is not None and any(
@@ -157,6 +166,7 @@ def main() -> None:
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--max-new-tokens", type=int, default=4096)
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--think", action="store_true")
     args = parser.parse_args()
 
     random.seed(0)
@@ -195,6 +205,8 @@ def main() -> None:
     block_size = args.block_size if args.block_size is not None else draft_model.block_size
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
+    mask_token_id = resolve_mask_token_id(draft_model, tokenizer)
+    stop_token_ids = [token_id for token_id in [tokenizer.eos_token_id] if token_id is not None]
     dataset = load_and_process_dataset(args.dataset)
 
     if args.max_samples is not None and len(dataset) > args.max_samples:
@@ -208,7 +220,7 @@ def main() -> None:
         messages = []
         for turn_index, user_content in enumerate(instance["turns"]):
             messages.append({"role": "user", "content": user_content})
-            input_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=True)
+            input_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=args.think)
             input_ids = tokenizer.encode(input_text, return_tensors="pt").to(target.device)
 
             response = {}
@@ -217,10 +229,10 @@ def main() -> None:
                     model=draft_model,
                     target=target,
                     input_ids=input_ids,
-                    mask_token_id=draft_model.mask_token_id,
+                    mask_token_id=mask_token_id,
                     max_new_tokens=args.max_new_tokens,
                     block_size=bs,
-                    stop_token_ids=[tokenizer.eos_token_id],
+                    stop_token_ids=stop_token_ids,
                     temperature=args.temperature,
                 )
             
