@@ -10,22 +10,47 @@ if [ -f "${PROJECT_DIR}/.venv/bin/activate" ]; then
     source "${PROJECT_DIR}/.venv/bin/activate"
 fi
 
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dt) DT="$2"; shift 2 ;;
+        --mode) MODE="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+if [[ "$DT" != "qz" && "$DT" != "a800" ]]; then
+    echo "错误: --dt 须为 qz 或 a800"
+    exit 1
+fi
+
 # ========================================
 # 配置参数
 # ========================================
 
 # GPU 设置
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
-NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
-MASTER_PORT="${MASTER_PORT:-29501}"
+if [ -n "${PET_NPROC_PER_NODE}" ]; then
+    NPROC_PER_NODE="${PET_NPROC_PER_NODE}"
+else
+    NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
+fi
+NNODES="${PET_NNODES:-${NNODES:-1}}"
+NODE_RANK="${PET_NODE_RANK:-${NODE_RANK:-0}}"
+MASTER_ADDR="${MASTER_ADDR:-${PET_MASTER_ADDR:-127.0.0.1}}"
+MASTER_PORT="${MASTER_PORT:-${PET_MASTER_PORT:-29502}}"
+
+if [ "${NNODES}" -gt 1 ] 2>/dev/null && { [ "${MASTER_ADDR}" = "127.0.0.1" ] || [ "${MASTER_ADDR}" = "localhost" ]; }; then
+    echo "错误: 多机训练 (NNODES=${NNODES}) 须设置 MASTER_ADDR 或 PET_MASTER_ADDR 为可互通的主节点地址。" >&2
+    exit 1
+fi
+export MASTER_ADDR
+export MASTER_PORT
 
 # 目标模型路径
-TARGET_MODEL="${TARGET_MODEL:-$WHZ_DIR/models/Qwen/Qwen3-8B}"
 TARGET_MODEL_BACKEND="${TARGET_MODEL_BACKEND:-hf}"  # hf 或 sglang
-PRETRAINED_DRAFT_MODEL_PATH="${PRETRAINED_DRAFT_MODEL_PATH:-}"
+PRETRAINED_DRAFT_MODEL_PATH="${PRETRAINED_DRAFT_MODEL_PATH:-/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/models/z-lab/Qwen3-8B-DFlash-b16}"
 
 # 训练参数
-NUM_EPOCHS="${NUM_EPOCHS:-6}"
+NUM_EPOCHS="${NUM_EPOCHS:-12}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 ACCUMULATION_STEPS="${ACCUMULATION_STEPS:-1}"
 LEARNING_RATE="${LEARNING_RATE:-4e-4}"
@@ -34,22 +59,21 @@ WARMUP_RATIO="${WARMUP_RATIO:-0.04}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.0}"
 
 # 数据特征参数（用于自动构建数据路径）
-DATA_NUM_SAMPLES="${DATA_NUM_SAMPLES:-40000}"
+DATA_NUM_SAMPLES="${DATA_NUM_SAMPLES:-400000}"
 ENABLE_THINKING="${ENABLE_THINKING:-off}"
 
-# 构建数据子目录名: n{N|all}_think_{on|off}
-DATASET_BASE_DIR="${DATASET_BASE_DIR:-./cache/dataset}"
-if [ "${ENABLE_THINKING}" = "on" ] || [ "${ENABLE_THINKING}" = "true" ] || [ "${ENABLE_THINKING}" = "1" ]; then
-    THINK_STR="on"
+if [ "$DT" = "qz" ]; then
+    export WANDB_MODE=offline
+    TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP/cache/data/regen_data/nemotron_${DATA_NUM_SAMPLES}/nemotron_think_${ENABLE_THINKING}_samples_${DATA_NUM_SAMPLES}_qwen3_8b_regen.jsonl}"
+    OUTPUT_DIR="${OUTPUT_DIR:-./cache/models/dflash_sample_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}_qwen3_8b_maxlen${MAX_LENGTH}_nnodes${NNODES}}"
+    TARGET_MODEL="${TARGET_MODEL:-/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/models/Qwen/Qwen3-8B}"
 else
-    THINK_STR="off"
+    TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-/data/wanghanzhen/Projects/MTP/NIPS26/training_data/regen_data/nemotron_40000/nemotron_think_off_samples_40000_qwen3_8b_regen.jsonl}"
+    OUTPUT_DIR="${OUTPUT_DIR:-./cache/models/dflash_lsrsl_sample_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}_nlayers${NUM_DRAFT_LAYERS}_maxlen${MAX_LENGTH}_epochs${NUM_EPOCHS}}"
+    TARGET_MODEL="${TARGET_MODEL:-$WHZ_DIR/models/Qwen/Qwen3-8B}"
 fi
-DATA_SUBDIR="n${DATA_NUM_SAMPLES}_think_${THINK_STR}"
 
 # 数据目录（支持通过 TRAIN_DATA_PATH 直接指定，否则自动构建）
-TRAIN_DATA_PATH="/data/wanghanzhen/Projects/MTP/NIPS26/training_data/regen_data/nemotron_${DATA_NUM_SAMPLES}/nemotron_think_${ENABLE_THINKING}_samples_${DATA_NUM_SAMPLES}_qwen3_8b_regen.jsonl"
-EVAL_DATA_PATH="${EVAL_DATA_PATH:-}"
-OUTPUT_DIR="${OUTPUT_DIR:-./cache/models/dflash_sample_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}_qwen3_8b_maxlen${MAX_LENGTH}}"
 CACHE_DIR="./cache/data/regen_data/nemotron_${DATA_NUM_SAMPLES}"
 
 # 模型参数
@@ -81,7 +105,6 @@ IS_PREFORMATTED="${IS_PREFORMATTED:-}"
 DATALOADER_NUM_WORKERS="${DATALOADER_NUM_WORKERS:-8}"
 BUILD_DATASET_NUM_PROC="${BUILD_DATASET_NUM_PROC:-8}"
 
-
 # ========================================
 # 显示配置
 # ========================================
@@ -91,7 +114,6 @@ echo "=========================================="
 echo "数据特征:"
 echo "  样本数量: ${DATA_NUM_SAMPLES}"
 echo "  思考模式: ${THINK_STR}"
-echo "  数据子目录: ${DATA_SUBDIR}"
 echo "------------------------------------------"
 echo "目标模型: ${TARGET_MODEL}"
 echo "目标模型后端: ${TARGET_MODEL_BACKEND}"

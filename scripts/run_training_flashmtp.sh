@@ -45,7 +45,7 @@ CKPT_DIR="${CKPT_DIR:-}"
 # ========================================
 # 数据特征参数
 DATA_NUM_SAMPLES="${DATA_NUM_SAMPLES:-40000}"
-ENABLE_THINKING="${ENABLE_THINKING:-on}"
+ENABLE_THINKING="${ENABLE_THINKING:-off}"
 
 # 草稿层数：默认目录名/ WandB id/ run name 中均带 nlayers${NUM_DRAFT_LAYERS}
 NUM_DRAFT_LAYERS="${NUM_DRAFT_LAYERS:-5}"
