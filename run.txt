@@ -11,7 +11,7 @@ python ./scripts/parquet2jsonl.py \
 launch server:
 --------------------------------
 
-cd /data/wanghanzhen/Projects/MTP/NIPS26/FlashMTP
+cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=0 python3 -m sglang.launch_server \
     --model $WHZ_DIR/models/Qwen/Qwen3-8B \
@@ -20,7 +20,7 @@ CUDA_VISIBLE_DEVICES=0 python3 -m sglang.launch_server \
     --mem-frac=0.8 \
     --port 30011
 
-cd /data/wanghanzhen/Projects/MTP/NIPS26/FlashMTP
+cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=1 python3 -m sglang.launch_server \
     --model $WHZ_DIR/models/Qwen/Qwen3-8B \
@@ -29,7 +29,7 @@ CUDA_VISIBLE_DEVICES=1 python3 -m sglang.launch_server \
     --mem-frac=0.8 \
     --port 30012
 
-cd /data/wanghanzhen/Projects/MTP/NIPS26/FlashMTP
+cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=2 python3 -m sglang.launch_server \
     --model $WHZ_DIR/models/Qwen/Qwen3-8B \
@@ -38,7 +38,7 @@ CUDA_VISIBLE_DEVICES=2 python3 -m sglang.launch_server \
     --mem-frac=0.8 \
     --port 30013
 
-cd /data/wanghanzhen/Projects/MTP/NIPS26/FlashMTP
+cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=3 python3 -m sglang.launch_server \
     --model $WHZ_DIR/models/Qwen/Qwen3-8B \
@@ -47,6 +47,7 @@ CUDA_VISIBLE_DEVICES=3 python3 -m sglang.launch_server \
     --mem-frac=0.8 \
     --port 30014
 
+cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=4 python3 -m sglang.launch_server \
     --model ../models/Qwen/Qwen3-8B \
@@ -55,6 +56,7 @@ CUDA_VISIBLE_DEVICES=4 python3 -m sglang.launch_server \
     --mem-frac=0.8 \
     --port 30015
 
+cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=5 python3 -m sglang.launch_server \
     --model ../models/Qwen/Qwen3-8B \
@@ -63,6 +65,7 @@ CUDA_VISIBLE_DEVICES=5 python3 -m sglang.launch_server \
     --mem-frac=0.8 \
     --port 30016
 
+cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=6 python3 -m sglang.launch_server \
     --model ../models/Qwen/Qwen3-8B \
@@ -71,6 +74,7 @@ CUDA_VISIBLE_DEVICES=6 python3 -m sglang.launch_server \
     --mem-frac=0.8 \
     --port 30017
 
+cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=7 python3 -m sglang.launch_server \
     --model ../models/Qwen/Qwen3-8B \
@@ -97,9 +101,9 @@ python scripts/regenerate_train_data.py \
     --concurrency 64 \
     --server-address localhost:30011 localhost:30012 localhost:30013 localhost:30014 localhost:30015 localhost:30016 localhost:30017 localhost:30018 \
     --temperature 0.0 \
-    --input-file-path ./cache/data/sampled_ori/nemotron_800000.jsonl \
-    --max-tokens 4096 \
-    --output-file-path ./cache/data/regen_data/nemotron_800000/nemotron_think_off_samples_800000_qwen3_8b_regen.jsonl
+    --input-file-path ./cache/data/sampled_ori/OrcaMath_10000.jsonl \
+    --max-tokens 10240 \
+    --output-file-path ./cache/data/regen_data/orcamath_10000/orcamath_think_off_samples_10000_qwen3_8b_regen.jsonl
 
 python scripts/regenerate_train_data.py \
     --model /share/public/public_models/Qwen3-8B \
