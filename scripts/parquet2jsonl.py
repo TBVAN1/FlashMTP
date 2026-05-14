@@ -1,15 +1,19 @@
-"""Convert Nemotron parquet files to jsonl for regenerate_train_data.py.
+"""Convert parquet files to JSONL for regenerate_train_data.py.
 
-Output schema:
+Output schema (same for all modes):
 {
-	"id": str,
+	"id": int,
 	"conversations": [
 		{"role": str, "content": str}
 	]
 }
 
-It supports balanced random sampling across task types (column: category).
-Output filename is fixed to: Nemotron_{num_samples}.jsonl
+Modes:
+- Nemotron: --input-dir with multiple parquet files; balanced sampling by ``category``.
+- Orca Math: --input-parquet (e.g. train-00000-of-00001.parquet); random sample by
+  ``question``; gold ``answer`` is dropped so the target model can regenerate responses.
+
+Default output names: Nemotron_{num_samples}.jsonl / OrcaMath_{num_samples}.jsonl
 """
 
 import argparse
@@ -29,10 +33,26 @@ VALID_ROLES = {"system", "user", "assistant"}
 
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--input-dir", type=str, required=True)
+	src = parser.add_mutually_exclusive_group(required=True)
+	src.add_argument(
+		"--input-dir",
+		type=str,
+		help="Directory of Nemotron parquet files (*.parquet).",
+	)
+	src.add_argument(
+		"--input-parquet",
+		type=str,
+		help="Single Orca Math parquet path (columns: question, answer).",
+	)
 	parser.add_argument("--output-dir", type=str, required=True)
 	parser.add_argument("--num-samples", type=int, required=True)
 	parser.add_argument("--seed", type=int, default=42)
+	parser.add_argument(
+		"--output-stem",
+		type=str,
+		default=None,
+		help="Output basename without .jsonl (default: Nemotron_* or OrcaMath_*).",
+	)
 	return parser.parse_args()
 
 
@@ -77,13 +97,51 @@ def normalize_conversations(messages: Any) -> Optional[List[Dict[str, str]]]:
 	return convs
 
 
-def main() -> None:
-	args = parse_args()
-	random.seed(args.seed)
+def orca_row_to_conversations(row: Dict[str, Any]) -> Optional[List[Dict[str, str]]]:
+	"""Single-turn user message from Orca Math question (matches regenerate_train_data)."""
+	q = row.get("question")
+	if not isinstance(q, str) or not q.strip():
+		return None
+	return [{"role": "user", "content": q.strip()}]
 
-	parquet_files = sorted(glob.glob(os.path.join(args.input_dir, "*.parquet")))
+
+def sample_orca_math(parquet_path: str, num_samples: int, seed: int) -> List[List[Dict[str, str]]]:
+	"""Reservoir sample valid rows in one pass (memory-friendly on large shards)."""
+	rng = random.Random(seed)
+	if not os.path.isfile(parquet_path):
+		raise FileNotFoundError(parquet_path)
+
+	reservoir: List[List[Dict[str, str]]] = []
+	seen_valid = 0
+	for row in tqdm(iter_rows(parquet_path), desc="Reading Orca Math parquet"):
+		convs = orca_row_to_conversations(row)
+		if convs is None:
+			continue
+		seen_valid += 1
+		if len(reservoir) < num_samples:
+			reservoir.append(convs)
+		else:
+			j = rng.randint(0, seen_valid - 1)
+			if j < num_samples:
+				reservoir[j] = convs
+
+	if not reservoir:
+		raise RuntimeError("No valid Orca Math rows (non-empty question)")
+	if seen_valid < num_samples:
+		print(
+			f"warning: only {seen_valid} valid rows (< num_samples {num_samples}); "
+			"using all available"
+		)
+
+	rng.shuffle(reservoir)
+	return reservoir
+
+
+def sample_nemotron(input_dir: str, num_samples: int, seed: int) -> tuple[List[Dict[str, Any]], List[str]]:
+	random.seed(seed)
+	parquet_files = sorted(glob.glob(os.path.join(input_dir, "*.parquet")))
 	if not parquet_files:
-		raise FileNotFoundError(f"No parquet files found in {args.input_dir}")
+		raise FileNotFoundError(f"No parquet files found in {input_dir}")
 
 	buckets: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 	sample_key = 0
@@ -106,8 +164,8 @@ def main() -> None:
 		raise RuntimeError("No valid samples found after filtering")
 
 	# Balanced allocation: average random sampling among task types.
-	base = args.num_samples // len(task_types)
-	rem = args.num_samples % len(task_types)
+	base = num_samples // len(task_types)
+	rem = num_samples % len(task_types)
 
 	selected: List[Dict[str, Any]] = []
 	for i, t in enumerate(task_types):
@@ -120,7 +178,7 @@ def main() -> None:
 		selected.extend(chosen)
 
 	# If total is still short (some tasks have too few samples), fill from leftovers.
-	if len(selected) < args.num_samples:
+	if len(selected) < num_samples:
 		used_keys = {x["_key"] for x in selected}
 		leftovers: List[Dict[str, Any]] = []
 		for t in task_types:
@@ -128,25 +186,39 @@ def main() -> None:
 				if item["_key"] not in used_keys:
 					leftovers.append(item)
 		random.shuffle(leftovers)
-		need_more = args.num_samples - len(selected)
+		need_more = num_samples - len(selected)
 		selected.extend(leftovers[:need_more])
 
 	random.shuffle(selected)
-	if len(selected) > args.num_samples:
-		selected = selected[: args.num_samples]
+	if len(selected) > num_samples:
+		selected = selected[:num_samples]
 
+	return selected, task_types
+
+
+def main() -> None:
+	args = parse_args()
 	os.makedirs(args.output_dir, exist_ok=True)
-	output_path = os.path.join(args.output_dir, f"Nemotron_{args.num_samples}.jsonl")
+
+	if args.input_parquet:
+		selected_convs = sample_orca_math(args.input_parquet, args.num_samples, args.seed)
+		stem = args.output_stem or f"OrcaMath_{args.num_samples}"
+		task_types: Optional[List[str]] = None
+	else:
+		assert args.input_dir is not None
+		selected, task_types = sample_nemotron(args.input_dir, args.num_samples, args.seed)
+		selected_convs = [x["conversations"] for x in selected]
+		stem = args.output_stem or f"Nemotron_{args.num_samples}"
+
+	output_path = os.path.join(args.output_dir, f"{stem}.jsonl")
 	with open(output_path, "w", encoding="utf-8") as f:
-		for idx, row in enumerate(selected):
-			out_row = {
-				"id": idx,
-				"conversations": row["conversations"],
-			}
+		for idx, convs in enumerate(selected_convs):
+			out_row = {"id": idx, "conversations": convs}
 			f.write(json.dumps(out_row, ensure_ascii=False) + "\n")
 
-	print(f"task_types: {task_types}")
-	print(f"written: {len(selected)}")
+	if task_types is not None:
+		print(f"task_types: {task_types}")
+	print(f"written: {len(selected_convs)}")
 	print(f"output: {output_path}")
 
 

@@ -3,6 +3,20 @@ This script will re-generate the dataset from target model,
 which better aligns the draft model with the target model’s output distribution.
 It accepts preformatted conversation JSONL, CodeAlpaca JSONL, and Orca Math parquet.
 
+Orca Math (large parquet) — recommended two-step flow (same JSONL schema as Nemotron exports):
+  1) Sample questions to JSONL (drops gold ``answer``; only ``question`` -> user turn):
+     python scripts/parquet2jsonl.py \\
+       --input-parquet /path/to/train-00000-of-00001.parquet \\
+       --output-dir ./cache/dataset \\
+       --num-samples 10000 \\
+       --seed 42
+  2) Regenerate assistant with your server:
+     python scripts/regenerate_train_data.py ... \\
+       --input-file-path ./cache/dataset/OrcaMath_10000.jsonl
+
+Alternatively, presample directly inside this script (parquet only, one-pass reservoir):
+  --parquet-presample-size N --parquet-presample-seed 42
+
 Output files are organized by (dataset_name, enable_thinking, samples, model):
   cache/data/regen_data/{dataset}_think_{on|off}_samples_{count}_{model}_regen.jsonl
 
@@ -125,7 +139,9 @@ def parse_arguments():
         "--input-file-path",
         type=str,
         required=True,
-        help="Path to the input file (conversation JSONL, CodeAlpaca JSONL, or Orca Math parquet)",
+        help="Path to the input file (conversation JSONL, CodeAlpaca JSONL, or Orca Math parquet). "
+        "For large Orca shards, prefer parquet2jsonl.py --input-parquet first, or use "
+        "--parquet-presample-size here.",
     )
     data_group.add_argument(
         "--output-file-path", type=str, default=None,
@@ -142,6 +158,19 @@ def parse_arguments():
         "--resume",
         action="store_true",
         help="Resume from existing output file, skip already processed samples",
+    )
+    data_group.add_argument(
+        "--parquet-presample-size",
+        type=int,
+        default=None,
+        help="If set, only this many rows are reservoir-sampled from a .parquet input (one pass, "
+        "valid rows only) before calling the model. Ignored for non-parquet inputs.",
+    )
+    data_group.add_argument(
+        "--parquet-presample-seed",
+        type=int,
+        default=42,
+        help="RNG seed for --parquet-presample-size (default: 42).",
     )
 
     # sglang server
@@ -317,14 +346,69 @@ def iter_parquet_records(input_file_path: str) -> Iterator[Dict[str, Any]]:
             yield normalize_input_record(row)
 
 
-def iter_input_records(input_file_path: str) -> Iterator[Dict[str, Any]]:
+def iter_parquet_records_reservoir(
+    input_file_path: str, num_samples: int, seed: int
+) -> Iterator[Dict[str, Any]]:
+    """One-pass reservoir sample of normalize-able parquet rows (same schema as JSONL pipeline)."""
+    try:
+        pq = importlib.import_module("pyarrow.parquet")
+    except ImportError as exc:
+        raise ImportError(
+            "Reading parquet input requires pyarrow. Install pyarrow or run in the project venv."
+        ) from exc
+
+    rng = random.Random(seed)
+    reservoir: List[Dict[str, Any]] = []
+    seen_valid = 0
+    parquet_file = pq.ParquetFile(input_file_path)
+    for batch in parquet_file.iter_batches(batch_size=1024):
+        for row in batch.to_pylist():
+            try:
+                rec = normalize_input_record(row)
+            except ValueError:
+                continue
+            seen_valid += 1
+            if len(reservoir) < num_samples:
+                reservoir.append(rec)
+            else:
+                j = rng.randint(0, seen_valid - 1)
+                if j < num_samples:
+                    reservoir[j] = rec
+
+    rng.shuffle(reservoir)
+    for idx, rec in enumerate(reservoir):
+        yield rec if "id" in rec else {**rec, "id": idx}
+
+
+def iter_input_records(
+    input_file_path: str,
+    parquet_presample_size: Optional[int] = None,
+    parquet_presample_seed: int = 42,
+) -> Iterator[Dict[str, Any]]:
     if input_file_path.endswith(".parquet"):
+        if parquet_presample_size is not None:
+            return iter_parquet_records_reservoir(
+                input_file_path, parquet_presample_size, parquet_presample_seed
+            )
         return iter_parquet_records(input_file_path)
+    if parquet_presample_size is not None:
+        raise ValueError("--parquet-presample-size only applies when input-file-path ends with .parquet")
     return iter_jsonl_records(input_file_path)
 
 
-def count_input_records(input_file_path: str) -> int:
+def count_input_records(
+    input_file_path: str, parquet_presample_size: Optional[int] = None
+) -> int:
     if input_file_path.endswith(".parquet"):
+        if parquet_presample_size is not None:
+            try:
+                pq = importlib.import_module("pyarrow.parquet")
+            except ImportError as exc:
+                raise ImportError(
+                    "Reading parquet input requires pyarrow. Install pyarrow or run in the project venv."
+                ) from exc
+            n = pq.ParquetFile(input_file_path).metadata.num_rows
+            return min(n, parquet_presample_size)
         try:
             pq = importlib.import_module("pyarrow.parquet")
         except ImportError as exc:
@@ -438,6 +522,12 @@ def main():
     # Parse command line arguments
     args = parse_arguments()
 
+    if args.parquet_presample_size is not None:
+        if not args.input_file_path.endswith(".parquet"):
+            raise ValueError("--parquet-presample-size only applies when --input-file-path is a .parquet file")
+        if args.parquet_presample_size <= 0:
+            raise ValueError("--parquet-presample-size must be a positive integer")
+
     # Resolve output file path (auto-generate if not explicitly provided)
     output_file_path = resolve_output_path(args)
     os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
@@ -466,7 +556,9 @@ def main():
     print(f"  Output file: {output_file_path}")
     print(f"  Resume mode: {args.resume}")
     print("-" * 50)
-    total_records = count_input_records(args.input_file_path)
+    total_records = count_input_records(
+        args.input_file_path, args.parquet_presample_size
+    )
 
     skip_lines = 0
     error_file_path = output_file_path.replace(".jsonl", "_error.jsonl")
@@ -537,7 +629,11 @@ def main():
         waiting_queue = {
             server_address: [] for server_address in valid_server_addresses
         }
-        input_records = iter_input_records(args.input_file_path)
+        input_records = iter_input_records(
+            args.input_file_path,
+            args.parquet_presample_size,
+            args.parquet_presample_seed,
+        )
         pbar = tqdm(total=total_records, desc="Processing", initial=skip_lines)
         start_server_index = 0
 
