@@ -86,7 +86,7 @@ python scripts/regenerate_train_data.py \
     --concurrency 64 \
     --server-address localhost:30001 localhost:30002 localhost:30003 localhost:30004 localhost:30005 localhost:30006 localhost:30007 localhost:30008 \
     --temperature 0.0 \
-    --input-file-path ./cache/data/sampled_ori/nemotron_400000.jsonl \
+    --input-file-path ./cache/data/sampled_ori/nemotron_800000.jsonl \
     --max-tokens 32768 \
     --resume \
     --enable-thinking \
@@ -97,9 +97,9 @@ python scripts/regenerate_train_data.py \
     --concurrency 64 \
     --server-address localhost:30011 localhost:30012 localhost:30013 localhost:30014 localhost:30015 localhost:30016 localhost:30017 localhost:30018 \
     --temperature 0.0 \
-    --input-file-path ./cache/data/sampled_ori/nemotron_400000.jsonl \
-    --max-tokens 10240 \
-    --output-file-path ./cache/data/regen_data/nemotron_400000/nemotron_think_off_samples_400000_qwen3_8b_regen.jsonl
+    --input-file-path ./cache/data/sampled_ori/nemotron_800000.jsonl \
+    --max-tokens 4096 \
+    --output-file-path ./cache/data/regen_data/nemotron_800000/nemotron_think_off_samples_800000_qwen3_8b_regen.jsonl
 
 python scripts/regenerate_train_data.py \
     --model /share/public/public_models/Qwen3-8B \
@@ -140,6 +140,6 @@ python scripts/regenerate_train_data.py \
 
 cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP && \
 mkdir -p whz_mtp_logs && \
-export NUM_DRAFT_LAYERS=5 && \
+export NUM_DRAFT_LAYERS=5 DATA_NUM_SAMPLES=800000 MAX_LENGTH=10240 && \
 bash scripts/run_training_dflash.sh --dt qz \
   > "whz_mtp_logs/train_dflash_origin_qz_dist_$(date +%Y%m%d_%H%M%S).log" 2>&1
