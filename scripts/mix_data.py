@@ -5,8 +5,8 @@
 用法:
     python mix_data.py --inputs file1.jsonl file2.jsonl ... --output merged.jsonl [--seed 42]
     python /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP/scripts/mix_data.py \
-        --inputs_dir /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP/cache/data/regen_data/mix_codealpaca_20k_nemotron_40k_orcamath_10k \
-        --output /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP/cache/data/regen_data/mix_codealpaca_20k_nemotron_40k_orcamath_10k/merged.jsonl
+        --inputs_dir /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP/cache/data/regen_data/mix_codealpaca_20k_nemotron_800k_orcamath_80k \
+        --output /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP/cache/data/regen_data/mix_codealpaca_20k_nemotron_800k_orcamath_80k/merged_900k.jsonl
 """
 
 import argparse

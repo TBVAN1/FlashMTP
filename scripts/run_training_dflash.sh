@@ -47,25 +47,26 @@ export MASTER_PORT
 
 # 目标模型路径
 TARGET_MODEL_BACKEND="${TARGET_MODEL_BACKEND:-hf}"  # hf 或 sglang
-PRETRAINED_DRAFT_MODEL_PATH="${PRETRAINED_DRAFT_MODEL_PATH:-/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/models/z-lab/Qwen3-8B-DFlash-b16}"
+PRETRAINED_DRAFT_MODEL_PATH="${PRETRAINED_DRAFT_MODEL_PATH:-}"
 
 # 训练参数
 NUM_EPOCHS="${NUM_EPOCHS:-6}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 ACCUMULATION_STEPS="${ACCUMULATION_STEPS:-1}"
-LEARNING_RATE="${LEARNING_RATE:-4e-4}"
+LEARNING_RATE="${LEARNING_RATE:-6e-4}"
 MAX_LENGTH="${MAX_LENGTH:-4096}"
 WARMUP_RATIO="${WARMUP_RATIO:-0.04}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.0}"
 
 # 数据特征参数（用于自动构建数据路径）
-DATA_NUM_SAMPLES="${DATA_NUM_SAMPLES:-400000}"
-ENABLE_THINKING="${ENABLE_THINKING:-on}"
+DATA_NUM_SAMPLES="${DATA_NUM_SAMPLES:-70000}"
+ENABLE_THINKING="${ENABLE_THINKING:-off}"
 
 if [ "$DT" = "qz" ]; then
     export WANDB_MODE=offline
-    TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP/cache/data/regen_data/nemotron_${DATA_NUM_SAMPLES}/nemotron_think_${ENABLE_THINKING}_samples_${DATA_NUM_SAMPLES}_qwen3_8b_regen.jsonl}"
-    OUTPUT_DIR="${OUTPUT_DIR:-./cache/models/dflash_sample_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}_qwen3_8b_maxlen${MAX_LENGTH}_nnodes${NNODES}}"
+    # TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP/cache/data/regen_data/nemotron_${DATA_NUM_SAMPLES}/nemotron_think_${ENABLE_THINKING}_samples_${DATA_NUM_SAMPLES}_qwen3_8b_regen.jsonl}"
+    TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP/cache/data/regen_data/mix_codealpaca_20k_nemotron_40k_orcamath_10k/merged_70k.jsonl}"
+    OUTPUT_DIR="${OUTPUT_DIR:-./cache/models/dflash_mix_sample_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}_qwen3_8b_maxlen${MAX_LENGTH}_nnodes${NNODES}}"
     TARGET_MODEL="${TARGET_MODEL:-/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/models/Qwen/Qwen3-8B}"
 else
     TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-/data/wanghanzhen/Projects/MTP/NIPS26/training_data/regen_data/nemotron_40000/nemotron_think_off_samples_40000_qwen3_8b_regen.jsonl}"
@@ -93,7 +94,7 @@ REPORT_TO="${REPORT_TO:-wandb}"  # none, wandb, tensorboard
 WANDB_PROJECT="${WANDB_PROJECT:-flashmtp-training-exp}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-}"
 WANDB_DIR="${WANDB_DIR:-./wandb}"  # 离线日志保存目录
-WANDB_RUN_ID="${WANDB_RUN_ID:-dflash_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}}"   # 离线子目录名称 (如: my_run_001，生成 offline-run-my_run_001)
+WANDB_RUN_ID="${WANDB_RUN_ID:-dflash_mix_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}}"   # 离线子目录名称 (如: my_run_001，生成 offline-run-my_run_001)
 
 # 分布式参数
 TP_SIZE="${TP_SIZE:-1}"
