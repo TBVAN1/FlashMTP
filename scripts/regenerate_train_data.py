@@ -1,7 +1,8 @@
 """
 This script will re-generate the dataset from target model,
 which better aligns the draft model with the target model’s output distribution.
-It accepts preformatted conversation JSONL, CodeAlpaca JSONL, and Orca Math parquet.
+It accepts preformatted conversation JSONL, CodeAlpaca JSONL, Orca Math parquet, or JSONL / parquet rows
+with a plain ``text`` field (e.g. SWE-bench oracle prompts from ``prepare_data.py --dataset swe-bench-oracle``).
 
 Orca Math (large parquet) — recommended two-step flow (same JSONL schema as Nemotron exports):
   1) Sample questions to JSONL (drops gold ``answer``; only ``question`` -> user turn):
@@ -139,7 +140,8 @@ def parse_arguments():
         "--input-file-path",
         type=str,
         required=True,
-        help="Path to the input file (conversation JSONL, CodeAlpaca JSONL, or Orca Math parquet). "
+        help="Path to the input file (conversation JSONL, CodeAlpaca JSONL, Orca Math parquet, or rows "
+        "with a ``text`` field / SWE-bench-style exports). "
         "For large Orca shards, prefer parquet2jsonl.py --input-parquet first, or use "
         "--parquet-presample-size here.",
     )
@@ -321,6 +323,14 @@ def normalize_input_record(record: Dict[str, Any]) -> Dict[str, Any]:
         return normalize_codealpaca_record(record)
     if "question" in record:
         return normalize_orca_math_record(record)
+    text = clean_text(record.get("text"))
+    if text:
+        out: Dict[str, Any] = {"conversations": [{"role": "user", "content": text}]}
+        if record.get("id") is not None:
+            out["id"] = record["id"]
+        elif record.get("instance_id") is not None:
+            out["id"] = record["instance_id"]
+        return out
     raise ValueError(f"Unsupported input record fields: {sorted(record.keys())}")
 
 

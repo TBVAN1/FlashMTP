@@ -1,14 +1,55 @@
 import argparse
+import importlib
 import json
 import os
 import random
 import subprocess
+import sys
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from tqdm import tqdm
 
-from datasets import concatenate_datasets, config, load_dataset
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _import_hf_datasets():
+    """Load HuggingFace ``datasets`` even when repo root is on ``sys.path`` (shadowed by ``./datasets/``)."""
+    root = _REPO_ROOT.resolve()
+    original = sys.path.copy()
+    filtered = []
+    for entry in original:
+        if entry == "":
+            try:
+                if Path.cwd().resolve() == root:
+                    continue
+            except OSError:
+                pass
+            filtered.append(entry)
+            continue
+        try:
+            if Path(entry).resolve() == root:
+                continue
+        except (OSError, ValueError):
+            pass
+        filtered.append(entry)
+    sys.path[:] = filtered
+    try:
+        mod = importlib.import_module("datasets")
+        if not hasattr(mod, "load_dataset"):
+            raise ImportError(
+                "Resolved `datasets` is not HuggingFace (install `datasets` or rename this repo's "
+                "top-level `datasets/` folder)."
+            )
+        return mod
+    finally:
+        sys.path[:] = original
+
+
+_hf_datasets = _import_hf_datasets()
+load_dataset = _hf_datasets.load_dataset
+concatenate_datasets = _hf_datasets.concatenate_datasets
+config = _hf_datasets.config
 
 """
 This script will convert the ultrachat/sharegpt dataset to the following schema in jsonl format:
@@ -21,6 +62,11 @@ This script will convert the ultrachat/sharegpt dataset to the following schema 
         }
     ],
 }
+
+Also supports princeton-nlp/SWE-bench_oracle (``--dataset swe-bench-oracle``): each row uses ``text`` as a
+single user turn for downstream ``regenerate_train_data.py``. Optional ``--swe-bench-max-tokens`` keeps only rows whose ``text`` fits under a Qwen tokenizer length
+budget; ``--sample-size`` then draws a random subset without replacement (``--swe-bench-random-seed``).
+If max-tokens is set but ``--sample-size`` is omitted, all qualifying rows are kept in original order.
 """
 
 ROLE_MAPPING = {
@@ -58,6 +104,7 @@ def parse_args():
             "magicoder-evol-instruct",
             "sciq",
             "camel",
+            "swe-bench-oracle",
         ],
         help="The demo dataset to quickly run the training for speculative decoding",
     )
@@ -95,6 +142,32 @@ def parse_args():
             "all",
         ],
         help="The subset of OpenCoder opc-sft-stage1 dataset to use, or 'all' to use all subsets (default: largescale_diverse_instruct)",
+    )
+    parser.add_argument(
+        "--swe-bench-split",
+        type=str,
+        default="train",
+        choices=["train", "dev", "test", "validation"],
+        help="HF split for princeton-nlp/SWE-bench_oracle (only used when --dataset swe-bench-oracle).",
+    )
+    parser.add_argument(
+        "--swe-bench-max-tokens",
+        type=int,
+        default=None,
+        help="swe-bench-oracle only: keep rows where tokenized ``text`` length (no special tokens) "
+        "<= this value. With --sample-size, subsample randomly without replacement after filtering.",
+    )
+    parser.add_argument(
+        "--swe-bench-tokenizer-path",
+        type=str,
+        default=None,
+        help="Tokenizer directory for --swe-bench-max-tokens (default: $WHZ_DIR/models/Qwen/Qwen3-8B).",
+    )
+    parser.add_argument(
+        "--swe-bench-random-seed",
+        type=int,
+        default=42,
+        help="Random seed for SWE-bench subsample after length filter (default: 42).",
     )
     return parser.parse_args()
 
@@ -240,17 +313,26 @@ def load_dataset_from_path(data_path: Path):
     return ds
 
 
-def process_and_save_ds(train_ds, test_ds, output_path, proc_fn, dataset_name):
-    train_output_jsonl_path = output_path.joinpath(f"{dataset_name}_train.jsonl")
+def process_and_save_ds(
+    train_ds,
+    test_ds,
+    output_path,
+    proc_fn,
+    dataset_name,
+    output_basename: Optional[str] = None,
+):
+    """Write ``{output_basename or dataset_name}_train.jsonl`` (and optional test split)."""
+    file_tag = output_basename if output_basename is not None else dataset_name
+    train_output_jsonl_path = output_path.joinpath(f"{file_tag}_train.jsonl")
     if train_output_jsonl_path.exists():
         print(
-            f"The dataset {dataset_name} has already been processed and saved in {train_output_jsonl_path}, skipping..."
+            f"The dataset {file_tag} has already been processed and saved in {train_output_jsonl_path}, skipping..."
         )
         return
 
     total_skipped_count = 0
     with open(train_output_jsonl_path, "w") as f:
-        for item in tqdm(train_ds, desc=f"Processing {dataset_name} dataset"):
+        for item in tqdm(train_ds, desc=f"Processing {file_tag} dataset"):
             if proc_fn is not None:
                 row, skipped_count = proc_fn(item, dataset_name)
                 if row is None:
@@ -261,9 +343,9 @@ def process_and_save_ds(train_ds, test_ds, output_path, proc_fn, dataset_name):
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     if test_ds is not None:
-        test_output_jsonl_path = output_path.joinpath(f"{dataset_name}_test.jsonl")
+        test_output_jsonl_path = output_path.joinpath(f"{file_tag}_test.jsonl")
         with open(test_output_jsonl_path, "w") as f:
-            for item in tqdm(test_ds, desc=f"Processing {dataset_name} test dataset"):
+            for item in tqdm(test_ds, desc=f"Processing {file_tag} test dataset"):
                 if proc_fn is not None:
                     row, skipped_count = proc_fn(item, dataset_name)
                     if row is None:
@@ -522,6 +604,78 @@ def process_camel_row(row: Dict, dataset_name: str = None) -> Tuple[Dict, int]:
     return processed_row, 0
 
 
+def resolve_swe_bench_tokenizer_path(explicit_path: Optional[str]) -> str:
+    if explicit_path:
+        return explicit_path
+    whz = os.environ.get("WHZ_DIR")
+    if not whz:
+        raise ValueError(
+            "SWE-bench length filter needs a tokenizer path: set WHZ_DIR or pass "
+            "--swe-bench-tokenizer-path (expected $WHZ_DIR/models/Qwen/Qwen3-8B)."
+        )
+    return str(Path(whz) / "models" / "Qwen" / "Qwen3-8B")
+
+
+def filter_swe_bench_oracle_by_token_length(
+    ds,
+    tokenizer_path: str,
+    max_tokens: int,
+    sample_size: Optional[int],
+    random_seed: int,
+):
+    """Keep rows with len(tokenize(text)) <= max_tokens; then shuffle and optionally subsample."""
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
+    valid_indices = []
+    for i in tqdm(range(len(ds)), desc="SWE-bench: length filter (tokenize text)"):
+        text = (ds[i].get("text") or "").strip()
+        if not text:
+            continue
+        n = len(tok.encode(text, add_special_tokens=False))
+        if n <= max_tokens:
+            valid_indices.append(i)
+
+    valid_indices.sort()
+    if sample_size is not None:
+        rng = random.Random(random_seed)
+        rng.shuffle(valid_indices)
+        take = min(sample_size, len(valid_indices))
+        valid_indices = valid_indices[:take]
+        print(
+            f"SWE-bench: {len(valid_indices)} / {len(ds)} rows with "
+            f"len(text) <= {max_tokens} tokens (random subsample to {take}, seed={random_seed})."
+        )
+    else:
+        print(
+            f"SWE-bench: {len(valid_indices)} / {len(ds)} rows with "
+            f"len(text) <= {max_tokens} tokens (original order, no subsample)."
+        )
+
+    if not valid_indices:
+        print("Warning: no SWE-bench rows passed the length filter.")
+    return ds.select(valid_indices)
+
+
+def process_swe_bench_oracle_row(row: Dict, dataset_name: str = None) -> Tuple[Dict, int]:
+    """Process a row from princeton-nlp/SWE-bench_oracle.
+
+    Uses the dataset ``text`` column (oracle retrieval prompt). Omits gold ``patch`` so rows match the
+    prompt-only JSONL flow used with ``regenerate_train_data.py`` (same idea as Orca Math questions).
+    """
+    text = (row.get("text") or "").strip()
+    if not text:
+        return None, 0
+    row_id = row.get("instance_id")
+    if not row_id:
+        row_id = hashlib.md5(text.encode()).hexdigest()
+    processed_row = {
+        "id": row_id,
+        "conversations": [{"role": "user", "content": text}],
+    }
+    return processed_row, 0
+
+
 def add_index(row, idx) -> Dict:
     row["id"] = idx
     return row
@@ -529,6 +683,8 @@ def add_index(row, idx) -> Dict:
 
 def main():
     args = parse_args()
+    if args.swe_bench_max_tokens is not None and args.dataset != "swe-bench-oracle":
+        raise ValueError("--swe-bench-max-tokens is only valid with --dataset swe-bench-oracle.")
     # load dataset
     if args.dataset == "ultrachat":
         ds = load_dataset("HuggingFaceH4/ultrachat_200k")["train_sft"]
@@ -648,11 +804,34 @@ def main():
         ]
         ds = concatenate_datasets(camel_datasets)
         proc_fn = process_camel_row
+    elif args.dataset == "swe-bench-oracle":
+        ds = load_dataset(
+            "princeton-nlp/SWE-bench_oracle",
+            "default",
+            split=args.swe_bench_split,
+            trust_remote_code=True,
+        )
+        proc_fn = process_swe_bench_oracle_row
+        if args.swe_bench_max_tokens is not None:
+            if args.swe_bench_max_tokens <= 0:
+                raise ValueError("--swe-bench-max-tokens must be a positive integer.")
+            tok_path = resolve_swe_bench_tokenizer_path(args.swe_bench_tokenizer_path)
+            ds = filter_swe_bench_oracle_by_token_length(
+                ds,
+                tok_path,
+                args.swe_bench_max_tokens,
+                args.sample_size,
+                args.swe_bench_random_seed,
+            )
+            args.sample_size = None
     else:
         raise ValueError(
-            f"This script only supports ultrachat, sharegpt, sharegpt4v, allava4v, opc, gsm8k, hendrycks_math, math_qa, codealpaca-20k, opencodeinstruct, magicoder-evol-instruct, sciq, camel, and perfect-blend-gptoss-20B datasets for demo purpose, if you wish to use other datasets, please modify this script."
+            "This script only supports ultrachat, sharegpt, sharegpt4v, allava4v, opc, gsm8k, "
+            "hendrycks_math, math_qa, codealpaca-20k, opencodeinstruct, magicoder-evol-instruct, "
+            "sciq, camel, swe-bench-oracle, and perfect-blend-style datasets for demo purpose; "
+            "extend the script to add more."
         )
-    # filter and split dataset
+    # filter and split dataset (swe-bench-oracle may already subsample inside length filter)
     if args.sample_size is not None and args.sample_size < len(ds):
         ds = ds.select(range(args.sample_size))
         print(f"Processing {args.sample_size} samples from the dataset {args.dataset}")
@@ -672,7 +851,13 @@ def main():
         output_path = Path(args.output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-    process_and_save_ds(train_ds, test_ds, output_path, proc_fn, args.dataset)
+    output_basename = None
+    if args.dataset == "swe-bench-oracle" and args.swe_bench_split != "train":
+        output_basename = f"{args.dataset}_{args.swe_bench_split}"
+
+    process_and_save_ds(
+        train_ds, test_ds, output_path, proc_fn, args.dataset, output_basename=output_basename
+    )
 
 
 if __name__ == "__main__":

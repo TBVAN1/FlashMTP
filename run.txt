@@ -147,3 +147,9 @@ mkdir -p whz_mtp_logs && \
 export NUM_DRAFT_LAYERS=5 DATA_NUM_SAMPLES=800000 MAX_LENGTH=10240 && \
 bash scripts/run_training_dflash.sh --dt qz \
   > "whz_mtp_logs/train_dflash_origin_qz_dist_$(date +%Y%m%d_%H%M%S).log" 2>&1
+
+python scripts/prepare_data.py \
+  --dataset swe-bench-oracle \
+  --swe-bench-tokenizer-path /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/models/Qwen/Qwen3-8B \
+  --swe-bench-max-tokens 4096 \
+  --sample-size 10000
