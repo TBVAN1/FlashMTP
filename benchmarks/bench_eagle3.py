@@ -45,7 +45,6 @@ import argparse
 import json
 import os
 import time
-from dataclasses import asdict
 from typing import List
 
 import requests
@@ -176,6 +175,26 @@ def send_flush_cache_request(base_url: str):
     requests.post(base_url + "/flush_cache")
 
 
+def summarize_metrics(metrics_list):
+    avg_accept_length = (
+        sum(metric.accept_length for metric in metrics_list) / len(metrics_list)
+        if metrics_list
+        else None
+    )
+
+    valid_time_per_token = [
+        1.0 / metric.output_throughput
+        for metric in metrics_list
+        if metric.output_throughput > 0
+    ]
+    avg_time_per_token = (
+        sum(valid_time_per_token) / len(valid_time_per_token)
+        if valid_time_per_token
+        else None
+    )
+    return avg_time_per_token, avg_accept_length
+
+
 def main():
     args = parse_args()
     server_args: ServerArgs = ServerArgs.from_cli_args(args)
@@ -204,6 +223,7 @@ def main():
 
     results = {}
     results["model"] = server_args.speculative_draft_model_path
+    baseline_time_per_token = {}
 
     def run_benchmarks(batch_size: int, steps: int, topk: int, num_draft_tokens: int):
         for benchmark_name, num_prompts, subset in benchmark_list:
@@ -220,6 +240,24 @@ def main():
                 host=args.host, port=args.port, batch_size=batch_size
             )
             send_flush_cache_request(base_url)
+
+            avg_time_per_token, avg_accept_length = summarize_metrics(metrics_list)
+            baseline_key = (benchmark_name, batch_size)
+            if steps == 0:
+                baseline_time_per_token[baseline_key] = avg_time_per_token
+
+            baseline_decode_time = baseline_time_per_token.get(baseline_key)
+            if steps == 0 and avg_time_per_token is not None:
+                speedup = 1.0
+            elif (
+                baseline_decode_time is not None
+                and avg_time_per_token is not None
+                and avg_time_per_token > 0
+            ):
+                speedup = baseline_decode_time / avg_time_per_token
+            else:
+                speedup = None
+
             if benchmark_name not in results:
                 results[benchmark_name] = []
             results[benchmark_name].append(
@@ -228,8 +266,10 @@ def main():
                     steps=steps,
                     topk=topk,
                     num_draft_tokens=num_draft_tokens,
-                    metrics=[asdict(metric) for metric in metrics_list],
-                    num_samples=num_prompts,
+                    speedup=speedup,
+                    accept_length=avg_accept_length,
+                    # metrics=[asdict(metric) for metric in metrics_list],
+                    # num_samples=num_prompts,
                 )
             )
 
