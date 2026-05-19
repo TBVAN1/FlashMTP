@@ -118,7 +118,8 @@ def parse_args():
         "--data-path",
         type=str,
         default=None,
-        help="The path to the custom dataset, if not specified, the default dataset will be loaded",
+        help="Custom dataset path. For sharegpt: file path. For swe-bench-oracle: local directory "
+        "containing HF-style shards (e.g. train-*.parquet under .../SWE-bench-oracle/data).",
     )
     parser.add_argument(
         "--sample-size",
@@ -305,6 +306,25 @@ def process_sharegpt4v_row(row, dataset_name: str = None) -> Dict:
 
     row = {"id": row["id"], "image": image, "conversations": formatted_conversations}
     return row, skipped_count
+
+
+def load_swe_bench_oracle_from_dir(data_dir: Path, split: str):
+    """Load SWE-bench_oracle parquet shards from a local directory (HF snapshot ``data/`` layout)."""
+    if not data_dir.is_dir():
+        raise FileNotFoundError(f"SWE-bench local data path is not a directory: {data_dir}")
+    files = sorted(data_dir.glob(f"{split}-*.parquet"))
+    if not files:
+        raise FileNotFoundError(
+            f"No parquet shards matching {split}-*.parquet under {data_dir}"
+        )
+    print(f"Loading SWE-bench_oracle split {split!r} from {len(files)} local parquet file(s):")
+    for f in files:
+        print(f"  {f}")
+    return load_dataset(
+        "parquet",
+        data_files=[str(f) for f in files],
+        split="train",
+    )
 
 
 def load_dataset_from_path(data_path: Path):
@@ -805,12 +825,15 @@ def main():
         ds = concatenate_datasets(camel_datasets)
         proc_fn = process_camel_row
     elif args.dataset == "swe-bench-oracle":
-        ds = load_dataset(
-            "princeton-nlp/SWE-bench_oracle",
-            "default",
-            split=args.swe_bench_split,
-            trust_remote_code=True,
-        )
+        if args.data_path:
+            ds = load_swe_bench_oracle_from_dir(Path(args.data_path), args.swe_bench_split)
+        else:
+            ds = load_dataset(
+                "princeton-nlp/SWE-bench_oracle",
+                "default",
+                split=args.swe_bench_split,
+                trust_remote_code=True,
+            )
         proc_fn = process_swe_bench_oracle_row
         if args.swe_bench_max_tokens is not None:
             if args.swe_bench_max_tokens <= 0:

@@ -50,7 +50,7 @@ CUDA_VISIBLE_DEVICES=3 python3 -m sglang.launch_server \
 cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=4 python3 -m sglang.launch_server \
-    --model ../models/Qwen/Qwen3-8B \
+    --model $WHZ_DIR/models/Qwen/Qwen3-8B \
     --cuda-graph-bs 1 2 4 8 16 32 64 128 \
     --dtype bfloat16 \
     --mem-frac=0.8 \
@@ -59,7 +59,7 @@ CUDA_VISIBLE_DEVICES=4 python3 -m sglang.launch_server \
 cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=5 python3 -m sglang.launch_server \
-    --model ../models/Qwen/Qwen3-8B \
+    --model $WHZ_DIR/models/Qwen/Qwen3-8B \
     --cuda-graph-bs 1 2 4 8 16 32 64 128 \
     --dtype bfloat16 \
     --mem-frac=0.8 \
@@ -68,7 +68,7 @@ CUDA_VISIBLE_DEVICES=5 python3 -m sglang.launch_server \
 cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=6 python3 -m sglang.launch_server \
-    --model ../models/Qwen/Qwen3-8B \
+    --model $WHZ_DIR/models/Qwen/Qwen3-8B \
     --cuda-graph-bs 1 2 4 8 16 32 64 128 \
     --dtype bfloat16 \
     --mem-frac=0.8 \
@@ -77,7 +77,7 @@ CUDA_VISIBLE_DEVICES=6 python3 -m sglang.launch_server \
 cd /inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=7 python3 -m sglang.launch_server \
-    --model ../models/Qwen/Qwen3-8B \
+    --model $WHZ_DIR/models/Qwen/Qwen3-8B \
     --cuda-graph-bs 1 2 4 8 16 32 64 128 \
     --dtype bfloat16 \
     --mem-frac=0.8 \
@@ -101,9 +101,9 @@ python scripts/regenerate_train_data.py \
     --concurrency 64 \
     --server-address localhost:30011 localhost:30012 localhost:30013 localhost:30014 localhost:30015 localhost:30016 localhost:30017 localhost:30018 \
     --temperature 0.0 \
-    --input-file-path ./cache/data/sampled_ori/OrcaMath_10000.jsonl \
+    --input-file-path /data/wanghanzhen/Projects/MTP/NIPS26/FlashMTP/cache/dataset/swe-bench-oracle_8049_n4896.jsonl \
     --max-tokens 10240 \
-    --output-file-path ./cache/data/regen_data/orcamath_10000/orcamath_think_off_samples_10000_qwen3_8b_regen.jsonl
+    --output-file-path ./cache/data/regen_data/swe-bench_5000/swe_bench_think_off_samples_5000_qwen3_8b_regen.jsonl
 
 python scripts/regenerate_train_data.py \
     --model /share/public/public_models/Qwen3-8B \

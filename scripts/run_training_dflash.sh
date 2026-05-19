@@ -54,12 +54,12 @@ NUM_EPOCHS="${NUM_EPOCHS:-6}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 ACCUMULATION_STEPS="${ACCUMULATION_STEPS:-1}"
 LEARNING_RATE="${LEARNING_RATE:-6e-4}"
-MAX_LENGTH="${MAX_LENGTH:-4096}"
+MAX_LENGTH="${MAX_LENGTH:-12288}"
 WARMUP_RATIO="${WARMUP_RATIO:-0.04}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.0}"
 
 # 数据特征参数（用于自动构建数据路径）
-DATA_NUM_SAMPLES="${DATA_NUM_SAMPLES:-70000}"
+DATA_NUM_SAMPLES="${DATA_NUM_SAMPLES:-5000}"
 ENABLE_THINKING="${ENABLE_THINKING:-off}"
 
 if [ "$DT" = "qz" ]; then
@@ -69,13 +69,13 @@ if [ "$DT" = "qz" ]; then
     OUTPUT_DIR="${OUTPUT_DIR:-./cache/models/dflash_mix_sample_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}_qwen3_8b_maxlen${MAX_LENGTH}_nnodes${NNODES}}"
     TARGET_MODEL="${TARGET_MODEL:-/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/models/Qwen/Qwen3-8B}"
 else
-    TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-/data/wanghanzhen/Projects/MTP/NIPS26/training_data/regen_data/nemotron_40000/nemotron_think_off_samples_40000_qwen3_8b_regen.jsonl}"
-    OUTPUT_DIR="${OUTPUT_DIR:-./cache/models/dflash_lsrsl_sample_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}_nlayers${NUM_DRAFT_LAYERS}_maxlen${MAX_LENGTH}_epochs${NUM_EPOCHS}}"
+    TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-/data/wanghanzhen/Projects/MTP/NIPS26/training_data/regen_data/swe-bench_5000/swe-bench_think_off_samples_5000_qwen3_8b_regen.jsonl}"
+    OUTPUT_DIR="${OUTPUT_DIR:-./cache/models/dflash_swe_bench_sample_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}_nlayers${NUM_DRAFT_LAYERS}_maxlen${MAX_LENGTH}_epochs${NUM_EPOCHS}}"
     TARGET_MODEL="${TARGET_MODEL:-$WHZ_DIR/models/Qwen/Qwen3-8B}"
 fi
 
 # 数据目录（支持通过 TRAIN_DATA_PATH 直接指定，否则自动构建）
-CACHE_DIR="./cache/data/regen_data/nemotron_${DATA_NUM_SAMPLES}"
+CACHE_DIR="./cache/data/regen_data/swe_bench_${DATA_NUM_SAMPLES}"
 
 # 模型参数
 NUM_DRAFT_LAYERS="${NUM_DRAFT_LAYERS:-5}"
@@ -94,7 +94,7 @@ REPORT_TO="${REPORT_TO:-wandb}"  # none, wandb, tensorboard
 WANDB_PROJECT="${WANDB_PROJECT:-flashmtp-training-exp}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-}"
 WANDB_DIR="${WANDB_DIR:-./wandb}"  # 离线日志保存目录
-WANDB_RUN_ID="${WANDB_RUN_ID:-dflash_mix_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}}"   # 离线子目录名称 (如: my_run_001，生成 offline-run-my_run_001)
+WANDB_RUN_ID="${WANDB_RUN_ID:-dflash_swe_bench_${DATA_NUM_SAMPLES}_think_${ENABLE_THINKING}}"   # 离线子目录名称 (如: my_run_001，生成 offline-run-my_run_001)
 
 # 分布式参数
 TP_SIZE="${TP_SIZE:-1}"
