@@ -45,6 +45,7 @@ import argparse
 import inspect
 import json
 import os
+import re
 import time
 from typing import Dict, List
 
@@ -127,6 +128,51 @@ def parse_benchmark_data_paths(items: List[str]) -> Dict[str, str]:
             )
         benchmark_data_paths[benchmark_name] = path
     return benchmark_data_paths
+
+
+def slugify_filename_part(value: str, max_length: int = 80) -> str:
+    value = str(value).strip()
+    if not value:
+        return "unknown"
+    value = os.path.basename(value.rstrip("/\\"))
+    value = re.sub(r"[^A-Za-z0-9._-]+", "-", value)
+    value = re.sub(r"-{2,}", "-", value).strip("-._")
+    if not value:
+        value = "unknown"
+    return value[:max_length]
+
+
+def infer_model_name(model_path: str) -> str:
+    return slugify_filename_part(model_path)
+
+
+def infer_dataset_label(benchmark_name: str, dataset_path: str) -> str:
+    if dataset_path:
+        dataset_name = os.path.splitext(os.path.basename(dataset_path))[0]
+        return slugify_filename_part(f"{benchmark_name}-{dataset_name}", max_length=40)
+    return slugify_filename_part(benchmark_name, max_length=40)
+
+
+def build_result_file_name(
+    args: argparse.Namespace,
+    server_args: ServerArgs,
+    benchmark_list: List[tuple],
+    benchmark_data_paths: Dict[str, str],
+    timestamp: str,
+) -> str:
+    target_model_name = infer_model_name(server_args.model_path)
+    draft_model_name = infer_model_name(server_args.speculative_draft_model_path)
+    dataset_labels = []
+    for benchmark_name, _, _ in benchmark_list:
+        dataset_labels.append(
+            infer_dataset_label(benchmark_name, benchmark_data_paths.get(benchmark_name))
+        )
+    dataset_name = slugify_filename_part("-".join(dataset_labels), max_length=120)
+    prefix = f"{slugify_filename_part(args.name, max_length=40)}_" if args.name else ""
+    return (
+        f"{prefix}target_{target_model_name}__draft_{draft_model_name}"
+        f"__data_{dataset_name}__{timestamp}.jsonl"
+    )
 
 
 def instantiate_benchmarker(
@@ -363,7 +409,13 @@ def main():
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     result_file = os.path.join(
         args.output_dir,
-        f"{args.name + '_' if args.name else ''}results_{timestamp}.jsonl",
+        build_result_file_name(
+            args=args,
+            server_args=server_args,
+            benchmark_list=benchmark_list,
+            benchmark_data_paths=benchmark_data_paths,
+            timestamp=timestamp,
+        ),
     )
     with open(result_file, "w") as f:
         json.dump(results, f, indent=4)
