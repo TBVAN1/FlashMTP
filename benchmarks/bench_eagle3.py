@@ -42,10 +42,11 @@ python bench_eagle3.py \
     --skip-launch-server
 """
 import argparse
+import inspect
 import json
 import os
 import time
-from typing import List
+from typing import Dict, List
 
 import requests
 from benchmarker import BENCHMARKS
@@ -94,7 +95,67 @@ def parse_args():
         action="store_true",
         default=False,
     )
+    benchmark_group.add_argument(
+        "--benchmark-data-paths",
+        type=str,
+        nargs="+",
+        default=[],
+        help=(
+            "Optional local dataset paths for benchmarks. "
+            "Format: <benchmark-name>=<path>. "
+            "Example: alpaca=./alpaca.json longbench=./longbench.json"
+        ),
+    )
     return parser.parse_args()
+
+
+def parse_benchmark_data_paths(items: List[str]) -> Dict[str, str]:
+    benchmark_data_paths: Dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError(
+                f"Invalid benchmark data path format: {item}. "
+                "Expected <benchmark-name>=<path>."
+            )
+        benchmark_name, path = item.split("=", 1)
+        benchmark_name = benchmark_name.strip()
+        path = path.strip()
+        if not benchmark_name or not path:
+            raise ValueError(
+                f"Invalid benchmark data path format: {item}. "
+                "Both benchmark name and path are required."
+            )
+        benchmark_data_paths[benchmark_name] = path
+    return benchmark_data_paths
+
+
+def instantiate_benchmarker(
+    benchmark_name: str,
+    benchmark_cls: type,
+    num_prompts: int,
+    subset: List[str],
+    dataset_path: str,
+):
+    signature = inspect.signature(benchmark_cls.__init__)
+    supported_parameters = signature.parameters
+    kwargs = {}
+
+    if num_prompts is not None:
+        kwargs["num_samples"] = num_prompts
+
+    if subset is not None:
+        if "subset" not in supported_parameters:
+            raise ValueError(f"Benchmark '{benchmark_name}' does not support subsets.")
+        kwargs["subset"] = subset
+
+    if dataset_path is not None:
+        if "dataset_path" not in supported_parameters:
+            raise ValueError(
+                f"Benchmark '{benchmark_name}' does not support local dataset paths."
+            )
+        kwargs["dataset_path"] = dataset_path
+
+    return benchmark_cls(**kwargs)
 
 
 def launch_sglang_server(
@@ -199,6 +260,7 @@ def main():
     args = parse_args()
     server_args: ServerArgs = ServerArgs.from_cli_args(args)
     configs = [tuple(map(int, config.split(","))) for config in args.config_list]
+    benchmark_data_paths = parse_benchmark_data_paths(args.benchmark_data_paths)
 
     # split the arg into list of (bench_name, num_prompts)
     benchmark_list = []
@@ -227,15 +289,19 @@ def main():
 
     def run_benchmarks(batch_size: int, steps: int, topk: int, num_draft_tokens: int):
         for benchmark_name, num_prompts, subset in benchmark_list:
+            dataset_path = benchmark_data_paths.get(benchmark_name)
             print(
-                f"Running benchmark {benchmark_name} with {num_prompts} prompts, batch size {batch_size}, steps {steps}, topk {topk}, num_draft_tokens {num_draft_tokens}, subset {subset}"
+                f"Running benchmark {benchmark_name} with {num_prompts} prompts, batch size {batch_size}, steps {steps}, topk {topk}, num_draft_tokens {num_draft_tokens}, subset {subset}, dataset_path {dataset_path}"
             )
             benchmarkder_cls = BENCHMARKS.get(benchmark_name)
             num_prompts = int(num_prompts) if num_prompts is not None else None
-            if subset is None:
-                benchmarker = benchmarkder_cls(num_samples=num_prompts)
-            else:
-                benchmarker = benchmarkder_cls(num_samples=num_prompts, subset=subset)
+            benchmarker = instantiate_benchmarker(
+                benchmark_name=benchmark_name,
+                benchmark_cls=benchmarkder_cls,
+                num_prompts=num_prompts,
+                subset=subset,
+                dataset_path=dataset_path,
+            )
             metrics_list = benchmarker.run(
                 host=args.host, port=args.port, batch_size=batch_size
             )

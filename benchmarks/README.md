@@ -18,6 +18,7 @@ We provided a unified script to test the performance of the Speculative Decoding
 - `--attention-backend`: the attention backend.
 - `--config-list`: the list of speculative decoding configuration to test, the format is `<batch-size>,<num-steps>,<topk>,<num-draft-tokens>`.
 - `--benchmark-list`: the list of benchmarks to test, the format is `<benchmark-name>:<num-prompts>:<subset>`.
+- `--benchmark-data-paths`: optional local dataset paths, the format is `<benchmark-name>=<path>`.
 
 ```shell
 python3 bench_eagle3.py \
@@ -30,6 +31,19 @@ python3 bench_eagle3.py \
     --attention-backend fa3 \
     --config-list 1,0,0,0 1,3,1,4 \
     --benchmark-list mtbench gsm8k:5 ceval:5:accountant \
+    --dtype bfloat16
+```
+
+For local performance-only benchmarks such as `alpaca` and `longbench`, you can provide dataset paths explicitly:
+
+```shell
+python3 bench_eagle3.py \
+    --model-path meta-llama/Llama-3.1-8B-Instruct \
+    --speculative-draft-model-path lmsys/sglang-EAGLE3-LLaMA3.1-Instruct-8B \
+    --port 30000 \
+    --config-list 1,0,0,0 1,3,1,4 \
+    --benchmark-list alpaca:200 longbench:50 \
+    --benchmark-data-paths alpaca=./alpaca.json longbench=./longbench.json \
     --dtype bfloat16
 ```
 

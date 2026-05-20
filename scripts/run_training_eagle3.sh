@@ -23,15 +23,10 @@ done
 
 DT="${DT:-a800}"
 MODE="${MODE:-online}"
-DATASET="${DATASET:-alpaca}"
+DATASET="${DATASET:-nemotron}"
 
 if [[ "${DT}" != "qz" && "${DT}" != "a800" && "${DT}" != "h100" ]]; then
     echo "错误: --dt 须为 qz、a800 或 h100"
-    exit 1
-fi
-
-if [[ "${DATASET}" != "alpaca" && "${DATASET}" != "gsm8k" && "${DATASET}" != "longbench" ]]; then
-    echo "错误: --dataset 须为 alpaca、gsm8k 或 longbench"
     exit 1
 fi
 
@@ -88,37 +83,34 @@ WARMUP_RATIO="${WARMUP_RATIO:-0.015}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-0.5}"
 TTT_LENGTH="${TTT_LENGTH:-7}"
 DRAFT_ACCUMULATION_STEPS="${DRAFT_ACCUMULATION_STEPS:-1}"
+if [ "${DT}" = "a800" ] && [ -z "${ENABLE_THINKING+x}" ]; then
+    ENABLE_THINKING="on"
+else
+    ENABLE_THINKING="${ENABLE_THINKING:-off}"
+fi
 
 # ========================================
-# 本地数据集配置
-# 要求本地数据已预处理成 jsonl，每行包含 conversations 字段
+# 数据集配置
+# 默认对齐 FlashMTP 的 Nemotron regen 数据；也支持手动覆盖
+# - 训练直接依赖 TRAIN_DATA_PATH，不再在启动脚本内做采样
 # ========================================
-DATA_NUM_SAMPLES="${DATA_NUM_SAMPLES:-50}"
-LOCAL_DATA_ROOT="${LOCAL_DATA_ROOT:-${PROJECT_DIR}/training_data/eagle3}"
-ALPACA_DATA_PATH="${ALPACA_DATA_PATH:-${LOCAL_DATA_ROOT}/alpaca/alpaca.jsonl}"
-GSM8K_DATA_PATH="${GSM8K_DATA_PATH:-${LOCAL_DATA_ROOT}/gsm8k/gsm8k.jsonl}"
-LONGBENCH_DATA_PATH="${LONGBENCH_DATA_PATH:-${LOCAL_DATA_ROOT}/longbench/longbench.jsonl}"
-
-case "${DATASET}" in
-    alpaca)
-        SOURCE_DATA_PATH="${ALPACA_DATA_PATH}"
-        ;;
-    gsm8k)
-        SOURCE_DATA_PATH="${GSM8K_DATA_PATH}"
-        ;;
-    longbench)
-        SOURCE_DATA_PATH="${LONGBENCH_DATA_PATH}"
-        ;;
-esac
-
+DATA_NUM_SAMPLES="${DATA_NUM_SAMPLES:-40000}"
 CHAT_TEMPLATE="${CHAT_TEMPLATE:-qwen3-thinking}"
 IS_PREFORMATTED="${IS_PREFORMATTED:-}"
 TRAIN_ONLY_LAST_TURN="${TRAIN_ONLY_LAST_TURN:-}"
 EVAL_DATA_PATH="${EVAL_DATA_PATH:-}"
 TRAIN_HIDDEN_STATES_PATH="${TRAIN_HIDDEN_STATES_PATH:-}"
 EVAL_HIDDEN_STATES_PATH="${EVAL_HIDDEN_STATES_PATH:-}"
+if [ "${DT}" = "qz" ]; then
+    DEFAULT_TRAIN_DATA_PATH="/inspire/hdd/project/inference-chip/xujiaming-253308120313/whz/FlashMTP/cache/data/regen_data/nemotron_${DATA_NUM_SAMPLES}/nemotron_think_${ENABLE_THINKING}_samples_${DATA_NUM_SAMPLES}_qwen3_8b_regen.jsonl"
+elif [ "${DT}" = "h100" ]; then
+    DEFAULT_TRAIN_DATA_PATH="../training_data/regen_data/nemotron_${DATA_NUM_SAMPLES}/nemotron_think_${ENABLE_THINKING}_samples_${DATA_NUM_SAMPLES}_qwen3_8b_regen.jsonl"
+else
+    DEFAULT_TRAIN_DATA_PATH="/share/wanghanzhen/SpeculativeDecoding/NIPS26/FlashMTP_v1.1/cache/data/regen_data/nemotron_40000/nemotron_think_on_samples_40000_qwen3_8b_regen.jsonl"
+fi
+
 CACHE_DIR="${CACHE_DIR:-./cache/data/eagle3_${DATASET}_${DATA_NUM_SAMPLES}}"
-TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-${CACHE_DIR}/${DATASET}_${DATA_NUM_SAMPLES}.jsonl}"
+TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-${DEFAULT_TRAIN_DATA_PATH}}"
 
 # ========================================
 # Eagle3 模型参数
@@ -150,58 +142,20 @@ WANDB_KEY="${WANDB_KEY:-}"
 RESUME="${RESUME:-}"
 CKPT_DIR="${CKPT_DIR:-}"
 
-OUTPUT_DIR="${OUTPUT_DIR:-./cache/models/eagle3_${DT}_${DATASET}_${MODE}_n${DATA_NUM_SAMPLES}_maxlen${MAX_LENGTH}_epochs${NUM_EPOCHS}}"
+OUTPUT_DIR="${OUTPUT_DIR:-./cache/models/eagle3_${DT}_${DATASET}_${MODE}_think_${ENABLE_THINKING}_n${DATA_NUM_SAMPLES}_maxlen${MAX_LENGTH}_epochs${NUM_EPOCHS}}"
 DATALOADER_NUM_WORKERS="${DATALOADER_NUM_WORKERS:-4}"
 BUILD_DATASET_NUM_PROC="${BUILD_DATASET_NUM_PROC:-8}"
 
 # ========================================
-# 准备本地训练数据
-# - 若 TRAIN_DATA_PATH 已存在，则直接复用
-# - 否则从 SOURCE_DATA_PATH 采样前 DATA_NUM_SAMPLES 条
+# 准备训练数据
+# - 直接使用 TRAIN_DATA_PATH（默认优先走 FlashMTP 同款 Nemotron regen 数据）
 # ========================================
 mkdir -p "${CACHE_DIR}"
 
 if [ ! -f "${TRAIN_DATA_PATH}" ]; then
-    if [ ! -f "${SOURCE_DATA_PATH}" ]; then
-        echo "错误: 本地数据源不存在: ${SOURCE_DATA_PATH}"
-        echo "请设置 ALPACA_DATA_PATH / GSM8K_DATA_PATH / LONGBENCH_DATA_PATH，或直接提供已存在的 TRAIN_DATA_PATH"
-        exit 1
-    fi
-
-    if [ "${SOURCE_DATA_PATH}" = "${TRAIN_DATA_PATH}" ]; then
-        echo "错误: SOURCE_DATA_PATH 与 TRAIN_DATA_PATH 不能相同，否则采样时会覆盖原始数据。"
-        exit 1
-    fi
-
-python - "${SOURCE_DATA_PATH}" "${TRAIN_DATA_PATH}" "${DATA_NUM_SAMPLES}" "${MODE}" <<'PY'
-import json
-import os
-import sys
-
-src_path, dst_path, sample_num, mode = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
-os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-
-count = 0
-with open(src_path, "r", encoding="utf-8") as fin, open(dst_path, "w", encoding="utf-8") as fout:
-    for raw_line in fin:
-        line = raw_line.strip()
-        if not line:
-            continue
-        record = json.loads(line)
-        if "conversations" not in record:
-            raise ValueError(
-                f"{src_path} 中存在不含 conversations 字段的样本，无法直接用于 Eagle3 {mode} 训练。"
-            )
-        fout.write(json.dumps(record, ensure_ascii=False) + "\n")
-        count += 1
-        if count >= sample_num:
-            break
-
-if count == 0:
-    raise ValueError(f"{src_path} 中未读取到可用样本。")
-
-print(f"Prepared {count} samples -> {dst_path}")
-PY
+    echo "错误: TRAIN_DATA_PATH 不存在: ${TRAIN_DATA_PATH}"
+    echo "请手动设置 TRAIN_DATA_PATH，并确保它是可直接训练的 jsonl 文件。"
+    exit 1
 fi
 
 if [ "${MODE}" = "offline" ]; then
@@ -232,9 +186,9 @@ echo "数据集: ${DATASET}"
 echo "------------------------------------------"
 echo "目标模型: ${TARGET_MODEL}"
 echo "目标模型后端: ${TARGET_MODEL_BACKEND}"
-echo "原始本地数据: ${SOURCE_DATA_PATH}"
-echo "采样后训练数据: ${TRAIN_DATA_PATH}"
-echo "采样数量: ${DATA_NUM_SAMPLES}"
+echo "思考模式: ${ENABLE_THINKING}"
+echo "训练数据路径: ${TRAIN_DATA_PATH}"
+echo "样本规模标识: ${DATA_NUM_SAMPLES}"
 if [ "${MODE}" = "offline" ]; then
     echo "训练 hidden states: ${TRAIN_HIDDEN_STATES_PATH}"
     echo "评估 hidden states: ${EVAL_HIDDEN_STATES_PATH:-无}"
