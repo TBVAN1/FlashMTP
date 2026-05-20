@@ -372,12 +372,20 @@ def main():
 
             if benchmark_name not in results:
                 results[benchmark_name] = []
+            print(
+                f"Summary for {benchmark_name}: "
+                f"avg_time_per_token={avg_time_per_token}, "
+                f"baseline_avg_time_per_token={baseline_decode_time}, "
+                f"speedup={speedup}, accept_length={avg_accept_length}"
+            )
             results[benchmark_name].append(
                 dict(
                     batch_size=batch_size,
                     steps=steps,
                     topk=topk,
                     num_draft_tokens=num_draft_tokens,
+                    avg_time_per_token=avg_time_per_token,
+                    baseline_avg_time_per_token=baseline_decode_time,
                     speedup=speedup,
                     accept_length=avg_accept_length,
                     # metrics=[asdict(metric) for metric in metrics_list],
