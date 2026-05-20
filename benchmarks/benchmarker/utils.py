@@ -40,32 +40,53 @@ def compute_metrics(
     Returns:
         BenchmarkMetrics object with computed metrics
     """
+    def has_answer(state: Any, key: str) -> bool:
+        try:
+            state[key]
+            return True
+        except KeyError:
+            return False
+
+    valid_states = [state for state in states if has_answer(state, answer_key)]
+    if not valid_states:
+        return BenchmarkMetrics(
+            latency=latency,
+            output_throughput=0.0,
+            accept_length=1.0,
+            num_questions=0,
+        )
+
     # Compute output tokens
     num_output_tokens = 0
     if additional_answer_keys:
         for key in [answer_key] + additional_answer_keys:
             num_output_tokens += sum(
-                s.get_meta_info(key)["completion_tokens"] for s in states
+                s.get_meta_info(key)["completion_tokens"]
+                for s in valid_states
+                if has_answer(s, key)
             )
     else:
         num_output_tokens = sum(
-            s.get_meta_info(answer_key)["completion_tokens"] for s in states
+            s.get_meta_info(answer_key)["completion_tokens"] for s in valid_states
         )
 
     output_throughput = num_output_tokens / latency if latency > 0 else 0.0
 
     # Compute accept length (speculative decoding metric)
-    has_verify = "spec_verify_ct" in states[0].get_meta_info(answer_key)
+    has_verify = "spec_verify_ct" in valid_states[0].get_meta_info(answer_key)
     if has_verify:
         num_verify_tokens = 0
         if additional_answer_keys:
             for key in [answer_key] + additional_answer_keys:
                 num_verify_tokens += sum(
-                    s.get_meta_info(key).get("spec_verify_ct", 0) for s in states
+                    s.get_meta_info(key).get("spec_verify_ct", 0)
+                    for s in valid_states
+                    if has_answer(s, key)
                 )
         else:
             num_verify_tokens = sum(
-                s.get_meta_info(answer_key).get("spec_verify_ct", 0) for s in states
+                s.get_meta_info(answer_key).get("spec_verify_ct", 0)
+                for s in valid_states
             )
 
         if num_verify_tokens == 0:
@@ -79,7 +100,7 @@ def compute_metrics(
         latency=latency,
         output_throughput=output_throughput,
         accept_length=accept_length,
-        num_questions=len(states),
+        num_questions=len(valid_states),
     )
 
 

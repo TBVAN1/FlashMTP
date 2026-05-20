@@ -166,9 +166,15 @@ class Benchmarker(ABC):
             # Extract predictions
             predictions = []
             primary_answer_key = answer_keys[0] if answer_keys else "answer"
+            num_missing_answers = 0
             for i in range(len(states)):
                 # Access answer from state object (states[i] supports dict-like access)
-                output = states[i][primary_answer_key]
+                try:
+                    output = states[i][primary_answer_key]
+                except KeyError:
+                    num_missing_answers += 1
+                    predictions.append(None)
+                    continue
                 if isinstance(output, str):
                     extracted = self.extract_answer(
                         output,
@@ -177,6 +183,12 @@ class Benchmarker(ABC):
                 else:
                     extracted = output
                 predictions.append(extracted)
+
+            if num_missing_answers > 0:
+                print(
+                    f"Warning: {num_missing_answers} requests did not return '{primary_answer_key}'. "
+                    "They will be ignored in prediction and metric aggregation."
+                )
 
             # Compute accuracy if applicable
             accuracy = None
